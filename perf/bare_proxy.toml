@@ -1,0 +1,24 @@
+# Bare proxy config for perf testing — no plugins, no auth, just routing.
+# Usage: ./target/release/maxllm --config perf/bare_proxy.toml
+
+global_plugins = []
+
+[server]
+listen = "0.0.0.0:8080"
+threads = 4
+
+[metrics]
+enabled = true
+
+[model_aliases]
+
+[providers.mock]
+kind = "openai"
+base_url = "http://127.0.0.1:9999"
+api_key = "mock"
+
+[[routes]]
+path = "/v1/proxy"
+provider = "mock"
+timeout_secs = 10
+plugins = []

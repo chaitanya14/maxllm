@@ -1,0 +1,331 @@
+# MaxLLM Gateway Configuration
+# Environment variables can be referenced with ${VAR_NAME} syntax.
+
+# Global plugins run on every request, in order.
+global_plugins = ["request_id", "api_auth"]
+
+[server]
+listen = "0.0.0.0:8080"
+threads = 4
+# tcp_reuseport = true
+# tcp_fastopen = 256
+
+[metrics]
+enabled = true
+
+# --- Model Aliases ---
+# Map requested model names to actual model names.
+[model_aliases]
+"gpt-4" = "gpt-4o"
+"claude-3" = "claude-sonnet-4-20250514"
+
+# --- Admin API (optional) ---
+# [admin]
+# master_key = "${MAXLLM_MASTER_KEY}"
+# enabled = true
+
+# --- Model Cost Overrides (supplement built-in costs) ---
+# [model_costs."custom-model"]
+# input_per_1m = 1.00
+# output_per_1m = 3.00
+
+# --- Plugins ---
+
+[plugins.request_id]
+category = "request_id"
+header_name = "X-Request-Id"
+
+[plugins.api_auth]
+category = "key_auth"
+header = "Authorization"
+strip_prefix = "Bearer "
+keys = ["sk-maxllm-dev-key"]
+
+# [plugins.ip_guard]
+# category = "ip_restriction"
+# type = "deny"
+# ip_list = ["10.0.0.0/8"]
+
+[plugins.rate_limiter]
+category = "rate_limit"
+requests_per_minute = 600
+key = "client_ip"
+
+[plugins.cors]
+category = "cors"
+allow_origin = "*"
+allow_methods = "GET, POST, OPTIONS"
+allow_headers = "Content-Type, Authorization"
+max_age = "86400"
+
+# [plugins.response_cache]
+# category = "cache"
+# max_entries = 10000
+# default_ttl_secs = 3600
+
+# [plugins.webhook_logger]
+# category = "webhook"
+# target = "maxllm::webhook"
+# include_body = false
+
+# [plugins.pii_guard]
+# category = "pii_filter"
+# patterns = ["email", "ssn", "credit_card", "phone"]
+# action = "block"
+# mode = "pre_call"
+
+# [plugins.keyword_guard]
+# category = "keyword_block"
+# keywords = ["DROP TABLE", "ignore previous instructions"]
+# case_sensitive = false
+
+# [plugins.size_limit]
+# category = "max_size"
+# max_body_bytes = 1048576
+# max_tokens = 128000
+
+# [plugins.prompt_guard]
+# category = "prompt_guard"
+# action = "block"                  # block | log_only
+# rules = ["system_override", "role_play_jailbreak", "developer_mode",
+#           "encoding_evasion", "delimiter_injection", "instruction_leak"]
+# # Custom rules:
+# # [[plugins.prompt_guard.custom_rules]]
+# # name = "company_policy"
+# # regex = "(?i)reveal.*internal.*policy"
+
+# [plugins.secret_scan]
+# category = "secret_scan"
+# action = "block"                  # block | redact | log_only
+# patterns = ["aws_access_key", "aws_secret_key", "github_token",
+#             "gitlab_token", "slack_token", "jwt", "private_key",
+#             "password_in_url", "generic_api_key"]
+# # Custom patterns:
+# # [[plugins.secret_scan.custom_patterns]]
+# # name = "internal_token"
+# # regex = "mxl_[A-Za-z0-9]{32}"
+# # replacement = "[INTERNAL_TOKEN]"
+
+# [plugins.regex_guard]
+# category = "regex_guard"
+# action = "block"                  # block | redact | log_only
+# mode = "pre_call"                 # pre_call | post_call | both
+# [[plugins.regex_guard.rules]]
+# name = "sql_injection"
+# regex = '(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b'
+# [[plugins.regex_guard.rules]]
+# name = "internal_id"
+# regex = 'PROJ-\d+'
+# replacement = "[INTERNAL_ID]"
+
+# --- Providers ---
+
+[providers.openai]
+kind = "openai"
+base_url = "https://api.openai.com"
+api_key = "${OPENAI_API_KEY}"
+default_model = "gpt-4o"
+
+[providers.anthropic]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+api_key = "${ANTHROPIC_API_KEY}"
+default_model = "claude-sonnet-4-20250514"
+
+[providers.gemini]
+kind = "gemini"
+base_url = "https://generativelanguage.googleapis.com"
+api_key = "${GEMINI_API_KEY}"
+default_model = "gemini-2.5-flash"
+
+# [providers.azure_gpt4]
+# kind = "azure_openai"
+# base_url = "https://my-resource.openai.azure.com"
+# api_key = "${AZURE_OPENAI_KEY}"
+# deployment = "gpt-4o"
+# api_version = "2024-02-01"
+
+# [providers.groq]
+# kind = "groq"
+# base_url = "https://api.groq.com"
+# api_key = "${GROQ_API_KEY}"
+
+# [providers.together]
+# kind = "together"
+# base_url = "https://api.together.xyz"
+# api_key = "${TOGETHER_API_KEY}"
+
+# [providers.fireworks]
+# kind = "fireworks"
+# base_url = "https://api.fireworks.ai"
+# api_key = "${FIREWORKS_API_KEY}"
+
+# [providers.mistral]
+# kind = "mistral"
+# base_url = "https://api.mistral.ai"
+# api_key = "${MISTRAL_API_KEY}"
+
+# [providers.deepseek]
+# kind = "deepseek"
+# base_url = "https://api.deepseek.com"
+# api_key = "${DEEPSEEK_API_KEY}"
+
+# [providers.xai]
+# kind = "xai"
+# base_url = "https://api.x.ai"
+# api_key = "${XAI_API_KEY}"
+
+[providers.ollama]
+kind = "ollama"
+base_url = "http://127.0.0.1:11434"
+default_model = "gemma3:1b"
+
+# [providers.cohere]
+# kind = "cohere"
+# base_url = "https://api.cohere.com"
+# api_key = "${COHERE_API_KEY}"
+
+# Mock provider for perf testing (run: python3 perf/mock_upstream.py)
+[providers.mock]
+kind = "openai"
+base_url = "http://127.0.0.1:9999"
+api_key = "mock"
+
+# --- Routes ---
+
+[[routes]]
+path = "/v1/chat/completions"
+provider = "openai"
+fallback = ["anthropic"]
+timeout_secs = 120
+strategy = "fallback"
+plugins = ["rate_limiter", "cors"]
+# guardrails = ["injection-guard", "pii-check", "secret-scan"]  # Only these guardrails run for this route
+
+[[routes]]
+path = "/v1/anthropic"
+provider = "anthropic"
+fallback = ["openai"]
+plugins = ["rate_limiter", "cors"]
+# guardrails = ["injection-guard"]  # Minimal guardrails for this route
+
+[[routes]]
+path = "/v1/ollama"
+provider = "ollama"
+timeout_secs = 120
+plugins = ["rate_limiter", "cors"]
+# guardrails = []  # Empty = all default_on guardrails apply
+
+[[routes]]
+path = "/v1/gemini"
+provider = "gemini"
+timeout_secs = 120
+plugins = ["rate_limiter", "cors"]
+
+# Mock route for perf testing (no rate limit)
+[[routes]]
+path = "/v1/mock"
+provider = "mock"
+timeout_secs = 10
+plugins = ["cors"]
+
+# Bare proxy route — no plugins, pure routing + upstream (perf baseline)
+[[routes]]
+path = "/v1/proxy"
+provider = "mock"
+timeout_secs = 10
+plugins = []
+
+# --- Guardrails (content inspection) ---
+# Guardrails operate on parsed message content, not raw HTTP.
+# Clients can select guardrails per-request: {"guardrails": ["pii-check", "injection-guard"]}
+# default_on guardrails always run regardless of client request.
+
+# [[guardrails]]
+# name = "injection-guard"
+# provider = "prompt_guard"             # Built-in: prompt_guard, pii_filter, secret_scan, keyword_block, regex_guard
+# mode = "pre_call"                     # pre_call | post_call | both
+# default_on = true                     # Always run, even if client doesn't request it
+# action = "block"                      # block | log_only
+# rules = ["system_override", "role_play_jailbreak", "developer_mode",
+#           "encoding_evasion", "delimiter_injection", "instruction_leak"]
+
+# [[guardrails]]
+# name = "pii-check"
+# provider = "pii_filter"
+# mode = "both"                         # Check both input and output
+# default_on = true
+# action = "redact"                     # Redact PII instead of blocking
+# patterns = ["email", "ssn", "credit_card", "phone"]
+
+# [[guardrails]]
+# name = "secret-scan"
+# provider = "secret_scan"
+# mode = "pre_call"
+# default_on = true
+# action = "block"
+# patterns = ["aws_access_key", "github_token", "jwt", "private_key", "generic_api_key"]
+
+# [[guardrails]]
+# name = "keyword-filter"
+# provider = "keyword_block"
+# mode = "pre_call"
+# default_on = false                    # Only runs when client requests it
+# action = "block"
+# keywords = ["DROP TABLE", "ignore previous instructions"]
+
+# [[guardrails]]
+# name = "custom-safety"
+# provider = "webhook"                  # Generic HTTP API (works with any guardrail service)
+# mode = "pre_call"
+# default_on = false
+# action = "block"
+# api_base = "https://safety.internal/v1/check"
+# api_key = "${SAFETY_API_KEY}"
+# timeout_secs = 5
+# [guardrails.headers]
+# X-Custom-Header = "value"
+
+# [[guardrails]]
+# name = "lakera-guard"
+# provider = "lakera"                   # Lakera AI prompt injection detection
+# mode = "pre_call"
+# default_on = true
+# action = "block"
+# api_key = "${LAKERA_API_KEY}"
+# api_base = "https://api.lakera.ai/v2/guard"  # Optional, this is the default
+
+# [[guardrails]]
+# name = "cel-policy"
+# provider = "cel"                    # CEL expression-based policy rules
+# mode = "pre_call"
+# default_on = true
+# action = "block"
+# [[guardrails.rules]]
+# name = "max-prompt-size"
+# expr = 'size(content) > 50000'
+# message = "Prompt exceeds maximum allowed size"
+# [[guardrails.rules]]
+# name = "require-auth"
+# expr = 'client_id == ""'
+# message = "Authentication required"
+# [[guardrails.rules]]
+# name = "block-confidential"
+# expr = 'content.contains("CONFIDENTIAL")'
+# message = "Confidential content not allowed"
+
+# Example: weighted load balancing across multiple providers
+# [[routes]]
+# path = "/v1/balanced"
+# provider = "openai"
+# fallback = ["anthropic", "groq"]
+# strategy = "weighted"
+# plugins = ["rate_limiter", "cors"]
+
+# Example: round-robin for even distribution
+# [[routes]]
+# path = "/v1/roundrobin"
+# provider = "groq"
+# fallback = ["together", "fireworks"]
+# strategy = "round_robin"
+# plugins = ["rate_limiter"]

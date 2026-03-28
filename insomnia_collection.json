@@ -1,0 +1,340 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-03-27T00:00:00.000Z",
+  "__export_source": "maxllm",
+  "resources": [
+    {
+      "_id": "wrk_maxllm",
+      "_type": "workspace",
+      "name": "MaxLLM Gateway",
+      "description": "Integration tests for MaxLLM AI Gateway"
+    },
+    {
+      "_id": "env_maxllm",
+      "_type": "environment",
+      "parentId": "wrk_maxllm",
+      "name": "Local",
+      "data": {
+        "base_url": "http://localhost:8080",
+        "auth_key": "sk-maxllm-dev-key"
+      }
+    },
+    {
+      "_id": "fld_root",
+      "_type": "request_group",
+      "parentId": "wrk_maxllm",
+      "name": "MaxLLM"
+    },
+    {
+      "_id": "fld_health",
+      "_type": "request_group",
+      "parentId": "fld_root",
+      "name": "Health & Routing"
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "fld_health",
+      "name": "Health Check",
+      "method": "GET",
+      "url": "{{ _.base_url }}/health",
+      "headers": [],
+      "body": {}
+    },
+    {
+      "_id": "req_404",
+      "_type": "request",
+      "parentId": "fld_health",
+      "name": "Unknown Route (404)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/nonexistent",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      }
+    },
+    {
+      "_id": "req_metrics",
+      "_type": "request",
+      "parentId": "fld_health",
+      "name": "Metrics",
+      "method": "GET",
+      "url": "{{ _.base_url }}/metrics",
+      "headers": [],
+      "body": {}
+    },
+    {
+      "_id": "fld_auth",
+      "_type": "request_group",
+      "parentId": "fld_root",
+      "name": "Authentication"
+    },
+    {
+      "_id": "req_no_auth",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "No Auth (401)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/chat/completions",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      }
+    },
+    {
+      "_id": "req_wrong_key",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "Wrong Key (401)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/chat/completions",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer wrong-key" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      }
+    },
+    {
+      "_id": "fld_ollama",
+      "_type": "request_group",
+      "parentId": "fld_root",
+      "name": "Ollama (Local)"
+    },
+    {
+      "_id": "req_ollama_basic",
+      "_type": "request",
+      "parentId": "fld_ollama",
+      "name": "Basic Chat",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/ollama",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemma3:1b\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2? Answer in one word.\"}]}"
+      }
+    },
+    {
+      "_id": "req_ollama_multiturn",
+      "_type": "request",
+      "parentId": "fld_ollama",
+      "name": "Multi-turn Conversation",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/ollama",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemma3:1b\",\"messages\":[{\"role\":\"user\",\"content\":\"Remember the number 42.\"},{\"role\":\"assistant\",\"content\":\"Got it, I will remember 42.\"},{\"role\":\"user\",\"content\":\"What number did I ask you to remember?\"}]}"
+      }
+    },
+    {
+      "_id": "req_ollama_system",
+      "_type": "request",
+      "parentId": "fld_ollama",
+      "name": "System Prompt",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/ollama",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemma3:1b\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a pirate. Respond in pirate speak.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]}"
+      }
+    },
+    {
+      "_id": "req_ollama_stream",
+      "_type": "request",
+      "parentId": "fld_ollama",
+      "name": "Streaming (SSE)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/ollama",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemma3:1b\",\"messages\":[{\"role\":\"user\",\"content\":\"Count from 1 to 5.\"}],\"stream\":true}"
+      }
+    },
+    {
+      "_id": "fld_gemini",
+      "_type": "request_group",
+      "parentId": "fld_root",
+      "name": "Gemini (Google)"
+    },
+    {
+      "_id": "req_gemini_basic",
+      "_type": "request",
+      "parentId": "fld_gemini",
+      "name": "Basic Chat",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/gemini",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemini-2.5-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"What is 2+2? Answer in one word.\"}]}"
+      }
+    },
+    {
+      "_id": "req_gemini_multiturn",
+      "_type": "request",
+      "parentId": "fld_gemini",
+      "name": "Multi-turn Conversation",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/gemini",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemini-2.5-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Remember the number 42.\"},{\"role\":\"assistant\",\"content\":\"Got it, I will remember 42.\"},{\"role\":\"user\",\"content\":\"What number did I ask you to remember?\"}]}"
+      }
+    },
+    {
+      "_id": "req_gemini_system",
+      "_type": "request",
+      "parentId": "fld_gemini",
+      "name": "System Prompt (Pirate)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/gemini",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemini-2.5-flash\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a pirate. Respond in pirate speak.\"},{\"role\":\"user\",\"content\":\"Hello!\"}]}"
+      }
+    },
+    {
+      "_id": "req_gemini_params",
+      "_type": "request",
+      "parentId": "fld_gemini",
+      "name": "With Temperature & Max Tokens",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/gemini",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemini-2.5-flash\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a haiku about coding.\"}],\"temperature\":0.9,\"max_tokens\":100}"
+      }
+    },
+    {
+      "_id": "fld_openai",
+      "_type": "request_group",
+      "parentId": "fld_root",
+      "name": "OpenAI / Fallback"
+    },
+    {
+      "_id": "req_openai_chat",
+      "_type": "request",
+      "parentId": "fld_openai",
+      "name": "Chat Completions",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/chat/completions",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
+      }
+    },
+    {
+      "_id": "req_model_alias",
+      "_type": "request",
+      "parentId": "fld_openai",
+      "name": "Model Alias (gpt-4 -> gpt-4o)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/chat/completions",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gpt-4\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      }
+    },
+    {
+      "_id": "req_anthropic_route",
+      "_type": "request",
+      "parentId": "fld_openai",
+      "name": "Anthropic Route",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/anthropic",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"claude-sonnet-4-20250514\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hello\"}]}"
+      }
+    },
+    {
+      "_id": "fld_cors",
+      "_type": "request_group",
+      "parentId": "fld_root",
+      "name": "CORS & Headers"
+    },
+    {
+      "_id": "req_cors_preflight",
+      "_type": "request",
+      "parentId": "fld_cors",
+      "name": "CORS Preflight (OPTIONS)",
+      "method": "OPTIONS",
+      "url": "{{ _.base_url }}/v1/chat/completions",
+      "headers": [
+        { "name": "Origin", "value": "http://example.com" },
+        { "name": "Access-Control-Request-Method", "value": "POST" },
+        { "name": "Access-Control-Request-Headers", "value": "Content-Type, Authorization" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_check_headers",
+      "_type": "request",
+      "parentId": "fld_cors",
+      "name": "Verify Response Headers",
+      "description": "Check X-Request-Id, X-MaxLLM-Provider, and CORS headers in the response",
+      "method": "POST",
+      "url": "{{ _.base_url }}/v1/ollama",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.auth_key }}" },
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\"model\":\"gemma3:1b\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+      }
+    }
+  ]
+}
