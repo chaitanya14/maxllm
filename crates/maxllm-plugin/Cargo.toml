@@ -1,0 +1,27 @@
+[package]
+name = "maxllm-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pingora = { version = "0.8.0", default-features = false, features = ["lb", "openssl"] }
+pingora-limits = "0.8.0"
+async-trait = "0.1"
+bytes = "1"
+http = "1"
+toml = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+ahash = { workspace = true }
+uuid = { version = "1", features = ["v7"] }
+ipnet = "2"
+regex = "1"
+sha2 = "0.10"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["time"] }
+maxllm-config = { path = "../maxllm-config" }
+cel-interpreter = "0.10"
