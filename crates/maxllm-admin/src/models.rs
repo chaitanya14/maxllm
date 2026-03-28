@@ -1,0 +1,178 @@
+// Copyright 2024 MaxLLM Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! Data models for the admin subsystem: virtual keys, teams, spend records,
+//! cost definitions, and API request/response types.
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Core domain models
+// ---------------------------------------------------------------------------
+
+/// A virtual API key that proxies requests through the gateway.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualKey {
+    /// Unique identifier (UUID v4).
+    pub id: String,
+    /// SHA-256 hex digest of the raw key string.
+    pub key_hash: String,
+    /// First 12 characters of the raw key for display (e.g. `sk-maxllm-ab`).
+    pub key_prefix: String,
+    /// Human-readable label.
+    pub name: String,
+    /// Optional team association.
+    pub team_id: Option<String>,
+    /// Model allow-list. Empty means all models are permitted.
+    pub allowed_models: Vec<String>,
+    /// Maximum spend in USD before the key is blocked.
+    pub max_budget_usd: Option<f64>,
+    /// Rolling budget window in days. `None` = lifetime budget.
+    pub budget_reset_days: Option<u32>,
+    /// Accumulated spend in the current budget window.
+    pub budget_spent_usd: f64,
+    /// When the current budget window expires.
+    pub budget_reset_at: Option<DateTime<Utc>>,
+    /// Requests-per-minute limit.
+    pub rpm_limit: Option<u32>,
+    /// Tokens-per-minute limit.
+    pub tpm_limit: Option<u64>,
+    /// Maximum concurrent in-flight requests.
+    pub max_parallel_requests: Option<u32>,
+    /// Hard expiration timestamp.
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub is_active: bool,
+    /// Arbitrary user-defined metadata.
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+    // Lifetime counters
+    pub total_requests: u64,
+    pub total_tokens_in: u64,
+    pub total_tokens_out: u64,
+    pub total_spend_usd: f64,
+}
+
+/// A team groups virtual keys together and can enforce a shared budget.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Team {
+    pub id: String,
+    pub name: String,
+    pub max_budget_usd: Option<f64>,
+    pub budget_spent_usd: f64,
+    /// Key IDs that belong to this team.
+    pub members: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A single spend event tied to one LLM request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendRecord {
+    pub id: String,
+    pub key_id: String,
+    pub team_id: Option<String>,
+    pub model: String,
+    pub provider: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub cost_usd: f64,
+    pub request_id: Option<String>,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Per-model pricing definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCost {
+    /// Exact model name or glob pattern (e.g. `gpt-4o*`).
+    pub model_pattern: String,
+    /// USD per 1 000 000 input tokens.
+    pub input_cost_per_1m: f64,
+    /// USD per 1 000 000 output tokens.
+    pub output_cost_per_1m: f64,
+}
+
+// ---------------------------------------------------------------------------
+// API request / response types
+// ---------------------------------------------------------------------------
+
+/// Body for `POST /admin/keys`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyCreateRequest {
+    pub name: String,
+    #[serde(default)]
+    pub team_id: Option<String>,
+    #[serde(default)]
+    pub allowed_models: Vec<String>,
+    #[serde(default)]
+    pub max_budget_usd: Option<f64>,
+    #[serde(default)]
+    pub budget_reset_days: Option<u32>,
+    #[serde(default)]
+    pub rpm_limit: Option<u32>,
+    #[serde(default)]
+    pub tpm_limit: Option<u64>,
+    #[serde(default)]
+    pub max_parallel_requests: Option<u32>,
+    #[serde(default)]
+    pub expires_in_days: Option<u32>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Returned exactly once after key creation — contains the raw key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyCreateResponse {
+    /// The raw key value. **Only returned once.**
+    pub key: String,
+    pub key_id: String,
+    pub name: String,
+    pub key_prefix: String,
+}
+
+/// Body for `POST /admin/teams`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamCreateRequest {
+    pub name: String,
+    #[serde(default)]
+    pub max_budget_usd: Option<f64>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Body for `POST /admin/teams/{id}/members`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberRequest {
+    pub key_id: String,
+}
+
+/// Aggregated spend report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendReport {
+    pub total_spend_usd: f64,
+    pub total_requests: u64,
+    pub total_tokens_in: u64,
+    pub total_tokens_out: u64,
+    pub by_model: Vec<SpendByGroup>,
+    pub by_provider: Vec<SpendByGroup>,
+    pub by_key: Vec<SpendByGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendByGroup {
+    pub name: String,
+    pub spend_usd: f64,
+    pub requests: u64,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+}
+
+/// RBAC role for future use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Admin,
+    User,
+    Viewer,
+}
