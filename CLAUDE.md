@@ -1,0 +1,261 @@
+# MaxLLM
+
+A high-performance AI gateway built from scratch on Cloudflare's [Pingora](https://github.com/cloudflare/pingora) framework. MaxLLM acts as a reverse proxy that accepts OpenAI-format requests and routes them to any supported LLM provider, translating request/response formats transparently.
+
+## Architecture
+
+MaxLLM is a **proxy, not a client**. It uses zero HTTP client libraries (no reqwest, no hyper client). Pingora handles all TCP/TLS/HTTP connections, connection pooling, and protocol negotiation. Our code only mutates headers and bodies as they flow through Pingora's proxy pipeline.
+
+### Request Flow
+
+```
+Client (OpenAI SDK/curl)
+  |
+  v
+Pingora accepts connection
+  |
+  v
+request_filter:
+  - Health/metrics/admin endpoints (bypass everything)
+  - Extract client IP
+  - Global plugin chain (request_id, key_auth)
+  - Route matching (path prefix)
+  - Route plugin chain (rate_limit, cors, cache, guardrails)
+  - Model alias resolution
+  - Provider selection (strategy + circuit breaker + fallback)
+  |
+  v
+upstream_peer:
+  - Construct HttpPeer (host, port, TLS, SNI)
+  - Set timeouts (connect: 10s, read: 120s, write: 30s)
+  |
+  v
+upstream_request_filter:
+  - Set upstream path (e.g. /v1/messages for Anthropic)
+  - Set provider headers (API key, version)
+  - Set Host header
+  - Run plugin chains
+  |
+  v
+request_body_filter:
+  - Buffer incoming body chunks
+  - On end_of_stream: translate body (OpenAI -> provider format)
+  - Extract model name, resolve aliases
+  - Detect streaming flag
+  |
+  v
+[Pingora proxies to upstream provider over TLS]
+  |
+  v
+response_filter:
+  - Circuit breaker: record success/failure
+  - Add X-MaxLLM-Provider header
+  - Run plugin chains (CORS headers, etc.)
+  |
+  v
+upstream_response_body_filter:
+  - Streaming: pipe chunks through StreamTranslator (Anthropic SSE -> OpenAI SSE)
+  - Non-streaming: buffer full response, translate (provider -> OpenAI format)
+  - Extract token usage for metrics
+  - Run plugin chains
+  |
+  v
+logging:
+  - Prometheus metrics (latency, tokens, fallbacks)
+  - Cost calculation (model cost map)
+  - Plugin logging chains (webhook, structured logging)
+  - Structured tracing log
+  |
+  v
+Client receives OpenAI-format response
+```
+
+### Crate Structure
+
+```
+maxllm/
+  Cargo.toml              # Workspace root (5 crates)
+  maxllm.toml             # Gateway configuration
+  crates/
+    maxllm-config/        # TOML config parsing, env var expansion, validation
+    maxllm-plugin/        # Plugin trait, chain executor, 10 built-in plugins
+    maxllm-translate/     # Provider translation (OpenAI <-> 15 providers)
+    maxllm-admin/         # Virtual keys, teams, cost tracking, budget enforcement, admin API
+    maxllm-gateway/       # Main binary: Pingora ProxyHttp implementation + routing
+```
+
+**Dependency flow:** `maxllm-gateway` depends on all four crates. `maxllm-plugin` and `maxllm-translate` are independent of each other. `maxllm-config` and `maxllm-admin` have no internal dependencies.
+
+### Key Design Decisions
+
+- **OpenAI as canonical format**: All routes accept OpenAI-format requests. The gateway translates to/from provider-native formats. Clients only need one SDK.
+- **Proxy, not client**: Body translation happens in Pingora's `request_body_filter` and `upstream_response_body_filter` hooks. We never call `read_request_body()` in `request_filter` — doing so consumes the body stream and causes Pingora to send headers with end-of-stream, preventing body forwarding.
+- **Plugin system over hardcoded middleware**: Auth, rate limiting, CORS, caching, guardrails, etc. are config-driven plugins, not compiled-in logic. Plugins hook into 5 lifecycle phases.
+- **Lock-free circuit breaker**: Uses AtomicU32/AtomicU64 for per-provider failure tracking. No mutexes in the hot path.
+- **StreamTranslator wrapped in Mutex**: Pingora requires `CTX: Send + Sync`. The `StreamTranslator` trait object is `Send` but not `Sync`, so it's wrapped in `Mutex<Option<Box<dyn StreamTranslator>>>`.
+
+## Supported Providers (15)
+
+| Provider | Kind | Format | Auth |
+|----------|------|--------|------|
+| OpenAI | `openai` | Passthrough | Bearer token |
+| Anthropic | `anthropic` | Full translation | x-api-key header |
+| Google Gemini | `gemini` | Full translation | API key query param |
+| Azure OpenAI | `azure_openai` | Passthrough (different URL/auth) | api-key header |
+| AWS Bedrock | `bedrock` | Anthropic format (SigV4 auth stub) | AWS SigV4 |
+| Groq | `groq` | OpenAI-compatible | Bearer token |
+| Together AI | `together` | OpenAI-compatible | Bearer token |
+| Fireworks AI | `fireworks` | OpenAI-compatible | Bearer token |
+| DeepInfra | `deepinfra` | OpenAI-compatible | Bearer token |
+| Mistral AI | `mistral` | OpenAI-compatible | Bearer token |
+| xAI (Grok) | `xai` | OpenAI-compatible | Bearer token |
+| DeepSeek | `deepseek` | OpenAI-compatible | Bearer token |
+| Ollama | `ollama` | OpenAI-compatible | None (local) |
+| Cohere | `cohere` | Full translation | Bearer token |
+| Custom | `openai_compat` | OpenAI-compatible | Configurable |
+
+## Plugin System
+
+Plugins are defined in TOML and referenced by name:
+
+```toml
+global_plugins = ["request_id", "api_auth"]
+
+[plugins.api_auth]
+category = "key_auth"
+keys = ["sk-maxllm-dev-key"]
+
+[[routes]]
+path = "/v1/chat/completions"
+provider = "openai"
+plugins = ["rate_limiter", "cors"]
+```
+
+### Built-in Plugins (10)
+
+| Plugin | Category | Purpose |
+|--------|----------|---------|
+| key_auth | `key_auth` | Bearer token authentication |
+| rate_limit | `rate_limit` | Sliding-window rate limiter (pingora-limits) |
+| request_id | `request_id` | UUIDv7 request ID generation |
+| cors | `cors` | CORS preflight + response headers |
+| ip_restriction | `ip_restriction` | IP allow/deny lists with CIDR |
+| cache | `cache` | In-memory LRU response cache with TTL |
+| webhook | `webhook` | Structured JSON logging for observability |
+| pii_filter | `pii_filter` | PII detection (email, SSN, credit card, phone, IP) |
+| keyword_block | `keyword_block` | Keyword/phrase blocking for guardrails |
+| max_size | `max_size` | Request body size and token limits |
+
+### Adding a New Plugin
+
+1. Create `crates/maxllm-plugin/src/builtin/my_plugin.rs`
+2. Implement the `Plugin` trait (only override hooks you need)
+3. Add to `builtin/mod.rs` and register in `factory.rs`
+4. Configure in `maxllm.toml`
+
+## Routing Strategies
+
+| Strategy | Config Value | Description |
+|----------|-------------|-------------|
+| Fallback | `fallback` | Try primary, then fallbacks in order (default) |
+| Weighted | `weighted` | Distribute traffic by provider weight |
+| Round Robin | `round_robin` | Even distribution across providers |
+| Least Connections | `least_connections` | Route to least busy provider |
+| Latency Based | `latency_based` | Route to fastest provider (planned) |
+| Cost Based | `cost_based` | Route to cheapest provider (planned) |
+
+```toml
+[[routes]]
+path = "/v1/chat/completions"
+provider = "openai"
+fallback = ["anthropic", "groq"]
+strategy = "weighted"
+num_retries = 2
+```
+
+## Virtual Keys & Multi-Tenancy (maxllm-admin)
+
+| Feature | Description |
+|---------|-------------|
+| Key generation | `POST /admin/keys` — generates `sk-maxllm-{uuid}` keys |
+| Per-key budgets | USD budgets with auto-reset periods |
+| Per-key rate limits | RPM/TPM limits per virtual key |
+| Model access control | Restrict which models a key can access |
+| Teams | Group keys into teams with team-level budgets |
+| Cost tracking | Automatic cost calculation using model cost map |
+| Spend reporting | `/admin/spend/report` with per-key/model/provider breakdown |
+| Admin API | 9 REST endpoints under `/admin/` protected by master key |
+
+### Default Model Pricing
+
+Built-in cost map for 10+ model families (gpt-4o, claude-sonnet, gemini-flash, etc.) with override support in config.
+
+## Provider Translation
+
+| Provider | Request Translation | Response Translation | Streaming |
+|----------|-------------------|---------------------|-----------|
+| OpenAI | Passthrough | Passthrough | Passthrough |
+| Anthropic | OpenAI -> Anthropic (system extraction, tool_choice mapping) | Anthropic -> OpenAI (content blocks, stop_reason, usage) | Anthropic SSE -> OpenAI SSE chunks |
+| Gemini | OpenAI -> Gemini (contents/parts format, functionDeclarations) | Gemini -> OpenAI (candidates, usageMetadata) | Gemini SSE -> OpenAI SSE chunks |
+| Cohere | OpenAI -> Cohere v2 (message format, tool mapping) | Cohere -> OpenAI (content blocks, token usage) | Cohere SSE -> OpenAI SSE chunks |
+| Azure OpenAI | Passthrough (deployment URL + api-key header) | Passthrough | Passthrough |
+| Bedrock | OpenAI -> Anthropic (reuses Anthropic translator) | Anthropic -> OpenAI | Anthropic SSE -> OpenAI SSE |
+| OpenAI-compat | Passthrough | Passthrough | Passthrough |
+
+## Configuration
+
+Config is TOML with `${ENV_VAR}` expansion. Key sections:
+
+- `[server]` — listen address, worker threads
+- `global_plugins` — plugin names for all requests
+- `[plugins.*]` — plugin definitions with `category` + params
+- `[providers.*]` — LLM provider configs (kind, base_url, api_key, weight, tags)
+- `[[routes]]` — path-prefix routing with provider, fallback chain, strategy, per-route plugins
+- `[model_aliases]` — map requested model names to actual models
+- `[admin]` — master key and admin API toggle
+- `[model_costs.*]` — override built-in model pricing
+- `[metrics]` — Prometheus metrics toggle
+
+## Building and Running
+
+```bash
+# Build
+cargo build --release
+
+# Run (set API keys as env vars)
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+./target/release/maxllm --config maxllm.toml
+
+# Test
+curl -H "Authorization: Bearer sk-maxllm-dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}' \
+  http://localhost:8080/v1/chat/completions
+```
+
+## Performance
+
+Benchmarked on macOS (Apple Silicon), 4 Pingora worker threads:
+
+| Scenario | Req/sec | p99 Latency |
+|----------|---------|-------------|
+| /health (no plugins) | 178,000 | 980us |
+| Auth rejection (2 plugins) | 14,000 | 13ms |
+
+## Test Coverage
+
+140 tests across 5 crates:
+- `maxllm-admin`: 35 tests (keys, teams, costs, budget, API)
+- `maxllm-translate`: 51 tests (all provider translators + streaming)
+- `maxllm-plugin`: 41 tests (all 10 plugins)
+- `maxllm-config`: 5 tests (parsing, validation, env vars)
+- `maxllm-gateway`: 7 tests (circuit breaker, routing) + 1 doc-test
+
+## Development Notes
+
+- `cargo check --offline` works if deps are cached (avoids SSL proxy issues)
+- `RUST_LOG=warn` suppresses per-request logs for benchmarking
+- `RUST_LOG=debug` shows full Pingora connection/TLS/header details
+- Always unset `HTTPS_PROXY` before running — Pingora routes through it and it breaks TLS to upstream providers
+- The `middleware.rs` file is legacy (auth moved to key_auth plugin) — can be deleted
