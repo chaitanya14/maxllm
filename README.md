@@ -1,6 +1,10 @@
 # MaxLLM
 
-A high-performance AI gateway built on Cloudflare's [Pingora](https://github.com/cloudflare/pingora) framework. MaxLLM acts as a reverse proxy that accepts OpenAI-format requests and routes them to any supported LLM provider, translating request/response formats transparently.
+[![Built on Pingora](https://img.shields.io/badge/Built_on-Pingora-F6821F?style=flat-square)](https://github.com/cloudflare/pingora)
+[![Rust](https://img.shields.io/badge/Rust-stable-DEA584?style=flat-square)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
+
+A high-performance AI gateway built on [Pingora](https://github.com/cloudflare/pingora), the open-source Rust framework that powers a significant portion of Cloudflare's global network. MaxLLM acts as a reverse proxy that accepts OpenAI-format requests and routes them to any supported LLM provider, translating request/response formats transparently.
 
 **One SDK. Any provider. Zero code changes.**
 
@@ -511,6 +515,18 @@ OPTIONS:
 | `MAXLLM_MASTER_KEY` | Admin API master key |
 
 > **Note:** Always unset `HTTPS_PROXY` / `HTTP_PROXY` before running &mdash; Pingora routes through them and it breaks TLS to upstream providers.
+
+## Why Pingora?
+
+MaxLLM is built on [Pingora](https://github.com/cloudflare/pingora), an open-source (Apache 2.0) Rust framework created by Cloudflare to handle their HTTP proxy infrastructure. We chose it because:
+
+- **Battle-tested at scale** &mdash; Pingora handles traffic across Cloudflare's global network, processing trillions of requests in production
+- **Connection pooling and reuse** &mdash; Built-in HTTP/1.1 and HTTP/2 connection management, reducing latency to upstream LLM providers
+- **Zero-copy proxy pipeline** &mdash; Request/response bodies flow through filter hooks without unnecessary allocations; we only mutate what needs translating
+- **TLS and protocol negotiation** &mdash; Handled by the framework, not our code; no dependency on separate HTTP client libraries (no reqwest, no hyper client)
+- **Async Rust with Tokio** &mdash; Non-blocking I/O across all connections with minimal overhead
+
+This means MaxLLM focuses purely on the AI gateway logic (translation, routing, plugins, guardrails) while Pingora handles the networking layer that has already been proven at internet scale.
 
 ## License
 
