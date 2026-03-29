@@ -265,9 +265,9 @@ pub struct RequestCtx {
 | `request_filter` | Auth, routing, plugin chains, provider selection |
 | `upstream_peer` | Resolve upstream host:port + TLS |
 | `upstream_request_filter` | Set upstream path, headers, strip client auth |
-| `request_body_filter` | Translate request body (OpenAI -> provider format) |
+| `request_body_filter` | Translated: OpenAI -> provider format. Native: extract metadata, forward as-is. Passthrough: skip. |
 | `response_filter` | Circuit breaker, add gateway headers, timing headers |
-| `upstream_response_body_filter` | Translate response body (provider -> OpenAI format) |
+| `upstream_response_body_filter` | Translated: provider -> OpenAI format. Native: extract usage, forward as-is. Passthrough: skip. |
 | `logging` | Metrics, cost calculation, structured logging |
 
 **Circuit Breaker:**
@@ -436,10 +436,10 @@ Client Request (OpenAI format)
     '-- Run plugin chains on upstream request
     |
     v
-[request_body_filter]
-    |-- Buffer body chunks
-    |-- Extract & resolve model alias
-    '-- ProviderTranslator::translate_request()
+[request_body_filter] (3 modes based on endpoint_type)
+    |-- Translated: buffer body, extract model, translate OpenAI -> provider
+    |-- Native: buffer body, extract metadata from native format, forward as-is
+    '-- Passthrough: skip entirely (zero processing)
     |
     v
   +-----------------------+
@@ -457,10 +457,10 @@ Client Request (OpenAI format)
     '-- Run plugin chains on response
     |
     v
-[upstream_response_body_filter]
-    |-- Streaming: StreamTranslator::process_chunk() per SSE chunk
-    |-- Non-streaming: buffer, then ProviderTranslator::translate_response()
-    |-- Extract token usage from response
+[upstream_response_body_filter] (3 modes based on endpoint_type)
+    |-- Translated: streaming via StreamTranslator, non-streaming via translate_response()
+    |-- Native: extract usage from native format, forward body as-is
+    |-- Passthrough: skip translation (run plugin chains only)
     '-- Run plugin chains on response body
     |
     v
@@ -471,7 +471,7 @@ Client Request (OpenAI format)
     '-- Structured log: provider, model, tokens, cost, latency
     |
     v
-Client Response (OpenAI format)
+Client Response (translated: OpenAI format / native: provider format / passthrough: raw)
 ```
 
 ---

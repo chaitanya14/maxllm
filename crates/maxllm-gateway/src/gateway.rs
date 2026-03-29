@@ -14,7 +14,7 @@ use crate::routing::{ProviderSelector, ProviderTarget};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
-use maxllm_config::{Config, ProviderKind, RouteConfig};
+use maxllm_config::{Config, EndpointType, ProviderKind, RouteConfig};
 use maxllm_plugin::guardrail::{
     self, GuardrailEngine, GuardrailInput, GuardrailOutput, GuardrailVerdict,
 };
@@ -412,6 +412,19 @@ impl ProxyHttp for AiGateway {
         ctx.route_index = Some(route_index);
         ctx.plugin_ctx.route_path = self.routes[route_index].path.clone();
         let route = &self.routes[route_index];
+        ctx.endpoint_type = route.endpoint_type;
+
+        // For passthrough, extract the path suffix after the route prefix
+        if route.endpoint_type == EndpointType::Passthrough {
+            let suffix = &path[route.path.len()..];
+            ctx.passthrough_path = Some(if suffix.is_empty() || suffix == "/" {
+                "/".to_string()
+            } else if !suffix.starts_with('/') {
+                format!("/{suffix}")
+            } else {
+                suffix.to_string()
+            });
+        }
 
         // Store route-specific guardrail scope
         if !route.guardrails.is_empty() {
@@ -481,12 +494,34 @@ impl ProxyHttp for AiGateway {
             .get(&ctx.provider_name)
             .expect("provider must exist");
 
-        // Set upstream path (Gemini needs dynamic path with model + query param auth)
-        let path = if provider.kind == ProviderKind::Gemini {
-            let model = provider.default_model.as_deref().unwrap_or("gemini-2.5-flash");
-            format!("/v1beta/models/{}:generateContent?key={}", model, provider.api_key)
-        } else {
-            provider.translator.upstream_path().to_string()
+        // Set upstream path based on endpoint type
+        let path = match ctx.endpoint_type {
+            EndpointType::Passthrough => {
+                // Use the suffix path captured from the client request
+                ctx.passthrough_path.clone().unwrap_or_else(|| "/".to_string())
+            }
+            EndpointType::Native => {
+                // Use the original client request path (already in provider format).
+                // For Gemini, append API key as query param.
+                let original = session.req_header().uri.path().to_string();
+                if provider.kind == ProviderKind::Gemini {
+                    format!("{}?key={}", original, provider.api_key)
+                } else {
+                    original
+                }
+            }
+            _ => {
+                // Normal: use translator's upstream path
+                if provider.kind == ProviderKind::Gemini {
+                    let model = provider.default_model.as_deref().unwrap_or("gemini-2.5-flash");
+                    format!(
+                        "/v1beta/models/{}:generateContent?key={}",
+                        model, provider.api_key
+                    )
+                } else {
+                    provider.translator.upstream_path().to_string()
+                }
+            }
         };
         upstream_request.set_uri(path.parse().expect("valid path"));
 
@@ -501,9 +536,14 @@ impl ProxyHttp for AiGateway {
         // Set Host header
         upstream_request.insert_header("Host", &provider.host)?;
 
-        // Remove the original Content-Length since body will be translated
-        let _ = upstream_request.remove_header("Content-Length");
-        upstream_request.insert_header("Transfer-Encoding", "chunked")?;
+        // For passthrough, preserve original Content-Length (no body mutation).
+        // For normal/native, remove it since body may be translated or re-serialized.
+        if ctx.endpoint_type == EndpointType::Passthrough {
+            // Keep original Content-Length and don't set chunked encoding
+        } else {
+            let _ = upstream_request.remove_header("Content-Length");
+            upstream_request.insert_header("Transfer-Encoding", "chunked")?;
+        }
 
         // Run plugin chains on upstream request
         self.global_chain
@@ -528,7 +568,12 @@ impl ProxyHttp for AiGateway {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
-        // Buffer incoming body chunks
+        // ── PASSTHROUGH: zero processing, forward chunks as-is ──
+        if ctx.endpoint_type == EndpointType::Passthrough {
+            return Ok(());
+        }
+
+        // Buffer incoming body chunks (both normal and native modes)
         if let Some(data) = body.take() {
             ctx.request_body_buf.extend_from_slice(&data);
         }
@@ -536,167 +581,223 @@ impl ProxyHttp for AiGateway {
         if end_of_stream && !ctx.body_translated {
             ctx.body_translated = true;
 
-            // Extract and resolve model name from request
-            let parsed = serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf).ok();
-
-            if let Some(ref parsed) = parsed {
-                if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
-                    let resolved = self.resolve_model_alias(model);
-                    ctx.model = resolved.clone();
-                    ctx.plugin_ctx.model = resolved;
-                }
-
-                // Extract client-requested guardrails from request body
-                if let Some(guardrails) = parsed.get("guardrails").and_then(|g| g.as_array()) {
-                    ctx.requested_guardrails = Some(
-                        guardrails
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect(),
-                    );
-                }
-            }
-
-            // Run pre-call guardrails on message content
-            if let Some(ref engine) = self.guardrail_engine {
-                if engine.has_pre_call() {
-                    let content = parsed
-                        .as_ref()
-                        .map(guardrail::extract_message_content)
-                        .unwrap_or_default();
-
-                    if !content.is_empty() {
-                        let input = GuardrailInput {
-                            content: &content,
-                            model: &ctx.model,
-                            client_id: ctx.plugin_ctx.client_id.as_deref(),
-                        };
-
-                        let (verdict, applied) = engine
-                            .run_pre_call(&input, ctx.requested_guardrails.as_deref(), ctx.route_guardrails.as_deref())
-                            .await;
-                        ctx.applied_guardrails = applied;
-
-                        match verdict {
-                            GuardrailVerdict::Block { ref guardrail, ref reason } => {
-                                // Write guardrail error response directly to client
-                                let error_body = serde_json::json!({
-                                    "error": {
-                                        "message": reason,
-                                        "type": "guardrail_violation",
-                                        "guardrail": guardrail,
-                                        "code": 400
-                                    }
-                                });
-                                let error_bytes = error_body.to_string().into_bytes();
-                                let mut resp =
-                                    pingora::http::ResponseHeader::build(400, Some(4))?;
-                                resp.insert_header("Content-Type", "application/json")?;
-                                resp.insert_header(
-                                    "Content-Length",
-                                    &error_bytes.len().to_string(),
-                                )?;
-                                resp.insert_header(
-                                    "X-MaxLLM-Applied-Guardrails",
-                                    &ctx.applied_guardrails.join(", "),
-                                )?;
-                                resp.insert_header(
-                                    "X-MaxLLM-Guardrail-Blocked",
-                                    guardrail,
-                                )?;
-                                _session
-                                    .write_response_header(Box::new(resp), false)
-                                    .await?;
-                                _session
-                                    .write_response_body(
-                                        Some(Bytes::from(error_bytes)),
-                                        true,
-                                    )
-                                    .await?;
-                                _session.set_keepalive(None);
-                                ctx.guardrail_blocked = Some(verdict);
-
-                                return Err(pingora::Error::explain(
-                                    pingora::ErrorType::HTTPStatus(400),
-                                    "guardrail blocked request",
-                                ));
-                            }
-                            GuardrailVerdict::Modify {
-                                content: new_content,
-                                ..
-                            } => {
-                                // Replace message content in request body with redacted version
-                                if let Some(mut parsed) = parsed.clone() {
-                                    if let Some(messages) = parsed
-                                        .get_mut("messages")
-                                        .and_then(|m| m.as_array_mut())
-                                    {
-                                        // Replace last user message content with redacted text
-                                        for msg in messages.iter_mut().rev() {
-                                            if msg.get("role").and_then(|r| r.as_str())
-                                                == Some("user")
-                                            {
-                                                msg["content"] =
-                                                    serde_json::Value::String(new_content.clone());
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    // Remove guardrails field before sending upstream
-                                    if let Some(obj) = parsed.as_object_mut() {
-                                        obj.remove("guardrails");
-                                    }
-                                    ctx.request_body_buf =
-                                        serde_json::to_vec(&parsed).unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
-                                }
-                            }
-                            _ => {
-                                // Pass or Log — remove guardrails field from body
-                                if let Some(mut parsed) = parsed.clone() {
-                                    if let Some(obj) = parsed.as_object_mut() {
-                                        if obj.remove("guardrails").is_some() {
-                                            ctx.request_body_buf = serde_json::to_vec(&parsed)
-                                                .unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // No guardrail engine — still strip guardrails field from body
-                if let Some(mut parsed) = parsed.clone() {
-                    if let Some(obj) = parsed.as_object_mut() {
-                        if obj.remove("guardrails").is_some() {
-                            ctx.request_body_buf =
-                                serde_json::to_vec(&parsed).unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
-                        }
-                    }
-                }
-            }
-
-            // Translate request body
             let provider = self
                 .providers
                 .get(&ctx.provider_name)
                 .expect("provider must exist");
 
-            match provider
-                .translator
-                .translate_request(&ctx.request_body_buf, None)
-            {
-                Ok(translated) => {
-                    if translated.is_streaming {
-                        ctx.is_streaming = true;
-                        *ctx.stream_translator.lock().unwrap() =
-                            Some(provider.translator.streaming_translator());
+            if ctx.endpoint_type == EndpointType::Native {
+                // ── NATIVE MODE: parse for metadata only, forward body as-is ──
+                let parsed =
+                    serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf).ok();
+
+                if let Some(ref parsed) = parsed {
+                    // Extract model from native format
+                    let provider_kind = format!("{:?}", provider.kind).to_lowercase();
+                    if let Some(model) =
+                        maxllm_translate::extract_native_model(&provider_kind, parsed)
+                    {
+                        let resolved = self.resolve_model_alias(&model);
+                        ctx.model = resolved.clone();
+                        ctx.plugin_ctx.model = resolved;
                     }
-                    *body = Some(Bytes::from(translated.body));
+
+                    // Extract streaming flag from native format
+                    ctx.is_streaming =
+                        maxllm_translate::extract_native_streaming(&provider_kind, parsed);
                 }
-                Err(e) => {
-                    warn!(error = %e, "Failed to translate request body");
-                    *body = Some(Bytes::from(std::mem::take(&mut ctx.request_body_buf)));
+
+                // Run pre-call guardrails on native content
+                if let Some(ref engine) = self.guardrail_engine {
+                    if engine.has_pre_call() {
+                        let provider_kind = format!("{:?}", provider.kind).to_lowercase();
+                        let content = parsed
+                            .as_ref()
+                            .map(|p| maxllm_translate::extract_native_content(&provider_kind, p))
+                            .unwrap_or_default();
+
+                        if !content.is_empty() {
+                            let input = GuardrailInput {
+                                content: &content,
+                                model: &ctx.model,
+                                client_id: ctx.plugin_ctx.client_id.as_deref(),
+                            };
+
+                            let (verdict, applied) = engine
+                                .run_pre_call(
+                                    &input,
+                                    ctx.requested_guardrails.as_deref(),
+                                    ctx.route_guardrails.as_deref(),
+                                )
+                                .await;
+                            ctx.applied_guardrails = applied;
+
+                            if let GuardrailVerdict::Block {
+                                ref guardrail,
+                                ref reason,
+                            } = verdict
+                            {
+                                return self
+                                    .send_guardrail_block(_session, ctx, guardrail, reason)
+                                    .await;
+                            }
+                        }
+                    }
+                }
+
+                // Set up native stream passthrough (passes chunks through unchanged)
+                if ctx.is_streaming {
+                    *ctx.stream_translator.lock().unwrap() =
+                        Some(Box::new(maxllm_translate::NativePassthroughStream));
+                }
+
+                // Forward body as-is (no translation)
+                *body = Some(Bytes::from(std::mem::take(&mut ctx.request_body_buf)));
+            } else {
+                // ── NORMAL MODE: OpenAI input → provider translation ──
+
+                // Extract and resolve model name from request
+                let parsed =
+                    serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf).ok();
+
+                if let Some(ref parsed) = parsed {
+                    if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
+                        let resolved = self.resolve_model_alias(model);
+                        ctx.model = resolved.clone();
+                        ctx.plugin_ctx.model = resolved;
+                    }
+
+                    // Extract client-requested guardrails from request body
+                    if let Some(guardrails) =
+                        parsed.get("guardrails").and_then(|g| g.as_array())
+                    {
+                        ctx.requested_guardrails = Some(
+                            guardrails
+                                .iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect(),
+                        );
+                    }
+                }
+
+                // Run pre-call guardrails on message content
+                if let Some(ref engine) = self.guardrail_engine {
+                    if engine.has_pre_call() {
+                        let content = parsed
+                            .as_ref()
+                            .map(guardrail::extract_message_content)
+                            .unwrap_or_default();
+
+                        if !content.is_empty() {
+                            let input = GuardrailInput {
+                                content: &content,
+                                model: &ctx.model,
+                                client_id: ctx.plugin_ctx.client_id.as_deref(),
+                            };
+
+                            let (verdict, applied) = engine
+                                .run_pre_call(
+                                    &input,
+                                    ctx.requested_guardrails.as_deref(),
+                                    ctx.route_guardrails.as_deref(),
+                                )
+                                .await;
+                            ctx.applied_guardrails = applied;
+
+                            match verdict {
+                                GuardrailVerdict::Block {
+                                    ref guardrail,
+                                    ref reason,
+                                } => {
+                                    return self
+                                        .send_guardrail_block(
+                                            _session, ctx, guardrail, reason,
+                                        )
+                                        .await;
+                                }
+                                GuardrailVerdict::Modify {
+                                    content: new_content,
+                                    ..
+                                } => {
+                                    // Replace message content with redacted version
+                                    if let Some(mut parsed) = parsed.clone() {
+                                        if let Some(messages) = parsed
+                                            .get_mut("messages")
+                                            .and_then(|m| m.as_array_mut())
+                                        {
+                                            for msg in messages.iter_mut().rev() {
+                                                if msg.get("role").and_then(|r| r.as_str())
+                                                    == Some("user")
+                                                {
+                                                    msg["content"] =
+                                                        serde_json::Value::String(
+                                                            new_content.clone(),
+                                                        );
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if let Some(obj) = parsed.as_object_mut() {
+                                            obj.remove("guardrails");
+                                        }
+                                        ctx.request_body_buf = serde_json::to_vec(&parsed)
+                                            .unwrap_or_else(|_| {
+                                                std::mem::take(&mut ctx.request_body_buf)
+                                            });
+                                    }
+                                }
+                                _ => {
+                                    // Pass or Log — remove guardrails field from body
+                                    if let Some(mut parsed) = parsed.clone() {
+                                        if let Some(obj) = parsed.as_object_mut() {
+                                            if obj.remove("guardrails").is_some() {
+                                                ctx.request_body_buf =
+                                                    serde_json::to_vec(&parsed).unwrap_or_else(
+                                                        |_| {
+                                                            std::mem::take(
+                                                                &mut ctx.request_body_buf,
+                                                            )
+                                                        },
+                                                    );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // No guardrail engine — still strip guardrails field from body
+                    if let Some(mut parsed) = parsed.clone() {
+                        if let Some(obj) = parsed.as_object_mut() {
+                            if obj.remove("guardrails").is_some() {
+                                ctx.request_body_buf = serde_json::to_vec(&parsed)
+                                    .unwrap_or_else(|_| {
+                                        std::mem::take(&mut ctx.request_body_buf)
+                                    });
+                            }
+                        }
+                    }
+                }
+
+                // Translate request body (OpenAI → provider format)
+                match provider
+                    .translator
+                    .translate_request(&ctx.request_body_buf, None)
+                {
+                    Ok(translated) => {
+                        if translated.is_streaming {
+                            ctx.is_streaming = true;
+                            *ctx.stream_translator.lock().unwrap() =
+                                Some(provider.translator.streaming_translator());
+                        }
+                        *body = Some(Bytes::from(translated.body));
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Failed to translate request body");
+                        *body =
+                            Some(Bytes::from(std::mem::take(&mut ctx.request_body_buf)));
+                    }
                 }
             }
         }
@@ -722,13 +823,13 @@ impl ProxyHttp for AiGateway {
             }
         }
 
-        // Only remove Content-Length for non-passthrough providers where body
-        // translation changes the size. Passthrough (OpenAI) keeps the original
-        // Content-Length for proper keep-alive and avoids chunked encoding overhead.
-        if let Some(p) = provider {
-            if p.translator.name() != "openai" {
-                let _ = upstream_response.remove_header("Content-Length");
-            }
+        // Only remove Content-Length when the body will be translated (changes size).
+        // Passthrough, native, and OpenAI providers keep the original Content-Length.
+        let skip_response_translation = ctx.endpoint_type == EndpointType::Passthrough
+            || ctx.endpoint_type == EndpointType::Native
+            || provider.map_or(false, |p| p.translator.name() == "openai");
+        if !skip_response_translation {
+            let _ = upstream_response.remove_header("Content-Length");
         }
 
         // Add gateway headers
@@ -778,6 +879,123 @@ impl ProxyHttp for AiGateway {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Option<std::time::Duration>> {
+        // ── PASSTHROUGH: zero processing ──
+        if ctx.endpoint_type == EndpointType::Passthrough {
+            // Still run plugin chains (logging, webhooks, etc.)
+            self.global_chain
+                .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            if let Some(idx) = ctx.route_index {
+                self.route_chains[idx]
+                    .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            }
+            return Ok(None);
+        }
+
+        // ── NATIVE MODE: forward as-is, extract usage from native format ──
+        if ctx.endpoint_type == EndpointType::Native {
+            if ctx.is_streaming {
+                // Streaming: pass through (NativePassthroughStream just copies bytes)
+                if let Some(data) = body.as_ref() {
+                    let mut guard = ctx.stream_translator.lock().unwrap();
+                    if let Some(translator) = guard.as_mut() {
+                        let translated = translator.process_chunk(data, end_of_stream);
+                        drop(guard);
+                        *body = Some(Bytes::from(translated));
+                    }
+                }
+            } else {
+                // Non-streaming: buffer, extract usage, forward as-is
+                if let Some(data) = body.take() {
+                    ctx.response_body_buf.extend_from_slice(&data);
+                }
+                if end_of_stream && !ctx.response_body_buf.is_empty() {
+                    // Extract usage from native response format
+                    if let Ok(parsed) =
+                        serde_json::from_slice::<serde_json::Value>(&ctx.response_body_buf)
+                    {
+                        extract_usage(&parsed, ctx);
+
+                        // Run post-call guardrails on native response content
+                        if let Some(ref engine) = self.guardrail_engine {
+                            if engine.has_post_call() {
+                                let provider = self.providers.get(&ctx.provider_name);
+                                let provider_kind = provider
+                                    .map(|p| format!("{:?}", p.kind).to_lowercase())
+                                    .unwrap_or_default();
+                                let response_content =
+                                    maxllm_translate::extract_native_response_content(
+                                        &provider_kind,
+                                        &parsed,
+                                    );
+                                if !response_content.is_empty() {
+                                    let output = GuardrailOutput {
+                                        content: &response_content,
+                                        model: &ctx.model,
+                                    };
+                                    let (verdict, post_applied) =
+                                        tokio::task::block_in_place(|| {
+                                            tokio::runtime::Handle::current().block_on(
+                                                engine.run_post_call(
+                                                    &output,
+                                                    ctx.requested_guardrails.as_deref(),
+                                                    ctx.route_guardrails.as_deref(),
+                                                ),
+                                            )
+                                        });
+                                    ctx.applied_guardrails.extend(post_applied);
+
+                                    if let GuardrailVerdict::Block { guardrail, reason } =
+                                        verdict
+                                    {
+                                        let error_body = serde_json::json!({
+                                            "error": {
+                                                "message": reason,
+                                                "type": "guardrail_violation",
+                                                "guardrail": guardrail,
+                                                "code": 400
+                                            }
+                                        });
+                                        *body = Some(Bytes::from(
+                                            error_body.to_string().into_bytes(),
+                                        ));
+                                        // Skip forwarding the original body
+                                        self.global_chain.run_response_body(
+                                            session,
+                                            body,
+                                            end_of_stream,
+                                            &mut ctx.plugin_ctx,
+                                        )?;
+                                        if let Some(idx) = ctx.route_index {
+                                            self.route_chains[idx].run_response_body(
+                                                session,
+                                                body,
+                                                end_of_stream,
+                                                &mut ctx.plugin_ctx,
+                                            )?;
+                                        }
+                                        return Ok(None);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Forward native response body as-is
+                    *body = Some(Bytes::from(std::mem::take(&mut ctx.response_body_buf)));
+                }
+            }
+
+            // Run plugin chains
+            self.global_chain
+                .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            if let Some(idx) = ctx.route_index {
+                self.route_chains[idx]
+                    .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            }
+            return Ok(None);
+        }
+
+        // ── NORMAL MODE: translate provider → OpenAI format ──
         if ctx.is_streaming {
             if let Some(data) = body.as_ref() {
                 let mut guard = ctx.stream_translator.lock().unwrap();
@@ -809,7 +1027,8 @@ impl ProxyHttp for AiGateway {
                                     if let Ok(resp_parsed) =
                                         serde_json::from_slice::<serde_json::Value>(&translated)
                                     {
-                                        let response_content = guardrail::extract_response_content(&resp_parsed);
+                                        let response_content =
+                                            guardrail::extract_response_content(&resp_parsed);
                                         if !response_content.is_empty() {
                                             let output = GuardrailOutput {
                                                 content: &response_content,
@@ -828,7 +1047,10 @@ impl ProxyHttp for AiGateway {
                                             ctx.applied_guardrails.extend(post_applied);
 
                                             match verdict {
-                                                GuardrailVerdict::Block { guardrail, reason } => {
+                                                GuardrailVerdict::Block {
+                                                    guardrail,
+                                                    reason,
+                                                } => {
                                                     let error_body = serde_json::json!({
                                                         "error": {
                                                             "message": reason,
@@ -837,16 +1059,18 @@ impl ProxyHttp for AiGateway {
                                                             "code": 400
                                                         }
                                                     });
-                                                    translated = error_body.to_string().into_bytes();
+                                                    translated =
+                                                        error_body.to_string().into_bytes();
                                                 }
                                                 GuardrailVerdict::Modify { content, .. } => {
-                                                    // Replace response content
                                                     let mut resp_json = resp_parsed;
                                                     if let Some(choices) = resp_json
                                                         .get_mut("choices")
                                                         .and_then(|c| c.as_array_mut())
                                                     {
-                                                        if let Some(choice) = choices.first_mut() {
+                                                        if let Some(choice) =
+                                                            choices.first_mut()
+                                                        {
                                                             if let Some(msg) =
                                                                 choice.get_mut("message")
                                                             {
@@ -857,8 +1081,9 @@ impl ProxyHttp for AiGateway {
                                                             }
                                                         }
                                                     }
-                                                    translated = serde_json::to_vec(&resp_json)
-                                                        .unwrap_or(translated);
+                                                    translated =
+                                                        serde_json::to_vec(&resp_json)
+                                                            .unwrap_or(translated);
                                                 }
                                                 _ => {}
                                             }
@@ -986,6 +1211,51 @@ impl AiGateway {
             .await?;
         METRICS.active_requests.dec();
         Ok(true)
+    }
+}
+
+impl AiGateway {
+    /// Send a guardrail block error response and abort the request.
+    async fn send_guardrail_block(
+        &self,
+        session: &mut Session,
+        ctx: &mut RequestCtx,
+        guardrail: &str,
+        reason: &str,
+    ) -> pingora::Result<()> {
+        let error_body = serde_json::json!({
+            "error": {
+                "message": reason,
+                "type": "guardrail_violation",
+                "guardrail": guardrail,
+                "code": 400
+            }
+        });
+        let error_bytes = error_body.to_string().into_bytes();
+        let mut resp = pingora::http::ResponseHeader::build(400, Some(4))?;
+        resp.insert_header("Content-Type", "application/json")?;
+        resp.insert_header("Content-Length", &error_bytes.len().to_string())?;
+        resp.insert_header(
+            "X-MaxLLM-Applied-Guardrails",
+            &ctx.applied_guardrails.join(", "),
+        )?;
+        resp.insert_header("X-MaxLLM-Guardrail-Blocked", guardrail)?;
+        session
+            .write_response_header(Box::new(resp), false)
+            .await?;
+        session
+            .write_response_body(Some(Bytes::from(error_bytes)), true)
+            .await?;
+        session.set_keepalive(None);
+        ctx.guardrail_blocked = Some(GuardrailVerdict::Block {
+            guardrail: guardrail.to_string(),
+            reason: reason.to_string(),
+        });
+
+        Err(pingora::Error::explain(
+            pingora::ErrorType::HTTPStatus(400),
+            "guardrail blocked request",
+        ))
     }
 }
 

@@ -5,6 +5,7 @@
 //! cost definitions, and API request/response types.
 
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -27,11 +28,11 @@ pub struct VirtualKey {
     /// Model allow-list. Empty means all models are permitted.
     pub allowed_models: Vec<String>,
     /// Maximum spend in USD before the key is blocked.
-    pub max_budget_usd: Option<f64>,
+    pub max_budget_usd: Option<Decimal>,
     /// Rolling budget window in days. `None` = lifetime budget.
     pub budget_reset_days: Option<u32>,
     /// Accumulated spend in the current budget window.
-    pub budget_spent_usd: f64,
+    pub budget_spent_usd: Decimal,
     /// When the current budget window expires.
     pub budget_reset_at: Option<DateTime<Utc>>,
     /// Requests-per-minute limit.
@@ -51,7 +52,7 @@ pub struct VirtualKey {
     pub total_requests: u64,
     pub total_tokens_in: u64,
     pub total_tokens_out: u64,
-    pub total_spend_usd: f64,
+    pub total_spend_usd: Decimal,
 }
 
 /// A team groups virtual keys together and can enforce a shared budget.
@@ -59,8 +60,8 @@ pub struct VirtualKey {
 pub struct Team {
     pub id: String,
     pub name: String,
-    pub max_budget_usd: Option<f64>,
-    pub budget_spent_usd: f64,
+    pub max_budget_usd: Option<Decimal>,
+    pub budget_spent_usd: Decimal,
     /// Key IDs that belong to this team.
     pub members: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -77,7 +78,7 @@ pub struct SpendRecord {
     pub provider: String,
     pub tokens_in: u64,
     pub tokens_out: u64,
-    pub cost_usd: f64,
+    pub cost_usd: Decimal,
     pub request_id: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
@@ -88,9 +89,9 @@ pub struct ModelCost {
     /// Exact model name or glob pattern (e.g. `gpt-4o*`).
     pub model_pattern: String,
     /// USD per 1 000 000 input tokens.
-    pub input_cost_per_1m: f64,
+    pub input_cost_per_1m: Decimal,
     /// USD per 1 000 000 output tokens.
-    pub output_cost_per_1m: f64,
+    pub output_cost_per_1m: Decimal,
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ pub struct KeyCreateRequest {
     #[serde(default)]
     pub allowed_models: Vec<String>,
     #[serde(default)]
-    pub max_budget_usd: Option<f64>,
+    pub max_budget_usd: Option<Decimal>,
     #[serde(default)]
     pub budget_reset_days: Option<u32>,
     #[serde(default)]
@@ -136,7 +137,7 @@ pub struct KeyCreateResponse {
 pub struct TeamCreateRequest {
     pub name: String,
     #[serde(default)]
-    pub max_budget_usd: Option<f64>,
+    pub max_budget_usd: Option<Decimal>,
     #[serde(default)]
     pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
@@ -150,7 +151,7 @@ pub struct TeamMemberRequest {
 /// Aggregated spend report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendReport {
-    pub total_spend_usd: f64,
+    pub total_spend_usd: Decimal,
     pub total_requests: u64,
     pub total_tokens_in: u64,
     pub total_tokens_out: u64,
@@ -162,7 +163,7 @@ pub struct SpendReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendByGroup {
     pub name: String,
-    pub spend_usd: f64,
+    pub spend_usd: Decimal,
     pub requests: u64,
     pub tokens_in: u64,
     pub tokens_out: u64,

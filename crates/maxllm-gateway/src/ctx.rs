@@ -6,6 +6,7 @@
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 
+use maxllm_config::EndpointType;
 use maxllm_plugin::guardrail::GuardrailVerdict;
 use maxllm_plugin::PluginCtx;
 use maxllm_translate::StreamTranslator;
@@ -56,6 +57,11 @@ pub struct RequestCtx {
     pub guardrail_blocked: Option<GuardrailVerdict>,
     /// Names of guardrails that were applied to this request.
     pub applied_guardrails: Vec<String>,
+    /// Endpoint type for this request (normal, native, passthrough).
+    pub endpoint_type: EndpointType,
+    /// For passthrough mode: the path suffix after the route prefix to forward upstream.
+    /// e.g., request to `/passthrough/anthropic/v1/messages` → suffix `/v1/messages`.
+    pub passthrough_path: Option<String>,
 }
 
 impl RequestCtx {
@@ -82,6 +88,8 @@ impl RequestCtx {
             route_guardrails: None,
             guardrail_blocked: None,
             applied_guardrails: Vec::new(),
+            endpoint_type: EndpointType::default(),
+            passthrough_path: None,
         }
     }
 }

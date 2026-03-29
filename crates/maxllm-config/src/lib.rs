@@ -199,6 +199,12 @@ pub enum EndpointType {
     Moderations,
     Completions,
     Rerank,
+    /// Native provider format — accept provider-native request/response format.
+    /// No body translation; metadata (model, tokens) extracted from native format.
+    Native,
+    /// Raw pass-through proxy — zero body parsing or translation.
+    /// Only auth injection, Host header rewriting, and logging.
+    Passthrough,
 }
 
 /// Load balancing strategy for provider selection.

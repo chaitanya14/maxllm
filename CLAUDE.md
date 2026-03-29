@@ -37,11 +37,12 @@ upstream_request_filter:
   - Run plugin chains
   |
   v
-request_body_filter:
-  - Buffer incoming body chunks
-  - On end_of_stream: translate body (OpenAI -> provider format)
-  - Extract model name, resolve aliases
-  - Detect streaming flag
+request_body_filter (3 modes):
+  - Translated (default): buffer body, translate OpenAI -> provider format,
+    extract model, resolve aliases, detect streaming, run pre-call guardrails
+  - Native: buffer body, extract metadata from native format (model, streaming),
+    run guardrails on native content, forward body as-is (no translation)
+  - Passthrough: skip entirely — zero buffering, parsing, or translation
   |
   v
 [Pingora proxies to upstream provider over TLS]
@@ -53,11 +54,11 @@ response_filter:
   - Run plugin chains (CORS headers, etc.)
   |
   v
-upstream_response_body_filter:
-  - Streaming: pipe chunks through StreamTranslator (Anthropic SSE -> OpenAI SSE)
-  - Non-streaming: buffer full response, translate (provider -> OpenAI format)
-  - Extract token usage for metrics
-  - Run plugin chains
+upstream_response_body_filter (3 modes):
+  - Translated: streaming via StreamTranslator (provider SSE -> OpenAI SSE),
+    non-streaming: buffer, translate (provider -> OpenAI), extract usage, run post-call guardrails
+  - Native: extract usage from native format, run post-call guardrails, forward body as-is
+  - Passthrough: skip translation — run plugin chains only
   |
   v
 logging:
@@ -67,7 +68,7 @@ logging:
   - Structured tracing log
   |
   v
-Client receives OpenAI-format response
+Client receives response
 ```
 
 ### Crate Structure
@@ -88,7 +89,7 @@ maxllm/
 
 ### Key Design Decisions
 
-- **OpenAI as canonical format**: All routes accept OpenAI-format requests. The gateway translates to/from provider-native formats. Clients only need one SDK.
+- **Three endpoint modes**: Translated routes accept OpenAI-format and translate to/from providers. Native routes accept provider-native format (Anthropic Messages API, Gemini, etc.) with metadata extraction but no body translation. Passthrough routes proxy raw bytes with zero processing.
 - **Proxy, not client**: Body translation happens in Pingora's `request_body_filter` and `upstream_response_body_filter` hooks. We never call `read_request_body()` in `request_filter` — doing so consumes the body stream and causes Pingora to send headers with end-of-stream, preventing body forwarding.
 - **Plugin system over hardcoded middleware**: Auth, rate limiting, CORS, caching, guardrails, etc. are config-driven plugins, not compiled-in logic. Plugins hook into 5 lifecycle phases.
 - **Lock-free circuit breaker**: Uses AtomicU32/AtomicU64 for per-provider failure tracking. No mutexes in the hot path.
