@@ -4,10 +4,14 @@ A high-performance AI gateway built on Cloudflare's [Pingora](https://github.com
 
 **One SDK. Any provider. Zero code changes.**
 
+<p align="center">
+  <img src="docs/architecture.svg" alt="MaxLLM Gateway Architecture" width="100%"/>
+</p>
+
 ## Features
 
 - **15 LLM providers** &mdash; OpenAI, Anthropic, Gemini, Azure, Bedrock, Groq, Together, Fireworks, Mistral, xAI, DeepSeek, Ollama, Cohere, DeepInfra, and any OpenAI-compatible endpoint
-- **Transparent translation** &mdash; Clients send OpenAI-format requests; the gateway translates to/from each provider's native API
+- **Three input modes** &mdash; OpenAI-format with translation, native provider format (Anthropic Messages API, Gemini, etc.), or raw pass-through
 - **Streaming support** &mdash; SSE streaming with real-time format translation (Anthropic SSE, Gemini SSE, Cohere SSE &rarr; OpenAI SSE)
 - **Smart routing** &mdash; Fallback chains, weighted load balancing, round-robin, least-connections, with per-provider circuit breakers
 - **Plugin system** &mdash; 13 built-in plugins (auth, rate limiting, CORS, caching, PII filtering, prompt injection detection, and more)
@@ -58,6 +62,41 @@ curl http://localhost:8080/v1/ollama -H "Authorization: Bearer sk-maxllm-dev-key
   -d '{"model": "gemma3:1b", "messages": [{"role": "user", "content": "Hello!"}]}'
 ```
 
+### Native Provider Endpoints
+
+Send requests in the provider's native format &mdash; no translation, full access to provider-specific features:
+
+```bash
+# Anthropic Messages API (native format, supports thinking blocks, etc.)
+curl http://localhost:8080/v1/messages -H "Authorization: Bearer sk-maxllm-dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 1024, "messages": [{"role": "user", "content": "Hello!"}]}'
+
+# Gemini generateContent API (native format)
+curl http://localhost:8080/v1beta/models/gemini-2.5-flash:generateContent \
+  -H "Authorization: Bearer sk-maxllm-dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"parts": [{"text": "Hello!"}]}]}'
+```
+
+### Pass-Through Endpoints
+
+Raw proxy to any provider API path &mdash; zero body parsing, just auth injection:
+
+```bash
+# Pass-through to Anthropic (any endpoint)
+curl http://localhost:8080/passthrough/anthropic/v1/messages \
+  -H "Authorization: Bearer sk-maxllm-dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 1024, "messages": [{"role": "user", "content": "Hello!"}]}'
+
+# Pass-through to OpenAI (any endpoint, including embeddings, images, etc.)
+curl http://localhost:8080/passthrough/openai/v1/embeddings \
+  -H "Authorization: Bearer sk-maxllm-dev-key" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "text-embedding-3-small", "input": "Hello world"}'
+```
+
 ## Supported Providers
 
 | Provider | Kind | Format | Auth |
@@ -100,16 +139,48 @@ default_model = "claude-sonnet-4-20250514"
 
 ### Routes
 
+Routes support three endpoint types:
+
+| Type | Config Value | Description |
+|------|-------------|-------------|
+| **Translated** | `chat_completions` (default) | Client sends OpenAI format; gateway translates to/from provider |
+| **Native** | `native` | Client sends provider-native format; gateway forwards as-is with metadata extraction |
+| **Pass-through** | `passthrough` | Raw reverse proxy; zero body parsing, just auth + logging |
+
 ```toml
+# Translated (default) — OpenAI format in, provider format out
 [[routes]]
 path = "/v1/chat/completions"
 provider = "openai"
 fallback = ["anthropic", "groq"]
-strategy = "fallback"              # fallback | weighted | round_robin | least_connections
+strategy = "fallback"
 timeout_secs = 120
 plugins = ["rate_limiter", "cors"]
-guardrails = ["injection-guard"]   # optional: scope guardrails to specific routes
+guardrails = ["injection-guard"]
+
+# Native — Anthropic Messages API format directly
+[[routes]]
+path = "/v1/messages"
+provider = "anthropic"
+endpoint_type = "native"
+plugins = ["rate_limiter", "cors"]
+
+# Native — Gemini generateContent format directly
+[[routes]]
+path = "/v1beta/models"
+provider = "gemini"
+endpoint_type = "native"
+plugins = ["rate_limiter", "cors"]
+
+# Pass-through — raw proxy to any Anthropic endpoint
+[[routes]]
+path = "/passthrough/anthropic"
+provider = "anthropic"
+endpoint_type = "passthrough"
+plugins = ["rate_limiter"]
 ```
+
+For pass-through routes, the path suffix after the route prefix is forwarded to the upstream provider (e.g., `/passthrough/anthropic/v1/messages` proxies to `https://api.anthropic.com/v1/messages`).
 
 ### Plugins
 
@@ -280,18 +351,105 @@ crates/
 
 ### Request Flow
 
+```mermaid
+graph TD
+    subgraph Clients["Clients"]
+        A[OpenAI SDK]
+        B[curl / HTTP]
+        C[AI Applications]
+    end
+
+    subgraph Gateway["MaxLLM Gateway — Pingora-powered"]
+        direction TB
+
+        subgraph Inbound["Request Pipeline"]
+            I1[Auth & Key Validation]
+            I2[PII & Prompt Guardrails]
+            I3[Router & Fallback Logic]
+            I4[Body Translation]
+        end
+
+        subgraph Core["Proxy Engine"]
+            direction LR
+            P1[Pingora Connection Pooling]
+            P2[TLS & Protocol Negotiation]
+        end
+
+        subgraph Outbound["Response Pipeline"]
+            O1[Response Translation]
+            O2[Usage & Cost Tracking]
+        end
+    end
+
+    subgraph Providers["LLM Providers"]
+        direction TB
+        P_O[OpenAI]
+        P_A[Anthropic]
+        P_G[Google Gemini]
+        P_C[Cohere / Bedrock / Others]
+    end
+
+    subgraph Admin["Management"]
+        DB[(Admin Store)]
+        Met[Prometheus Metrics]
+    end
+
+    %% Flow
+    Clients ==> I1
+    I1 --> I2 --> I3 --> I4
+    I4 ==> Core
+    Core ==> Providers
+    Providers ==> Core
+    Core ==> O1
+    O1 --> O2
+    O2 ==> Clients
+
+    %% Data Connections
+    I1 -.-> DB
+    O2 -.-> DB
+    O2 -.-> Met
+
+    %% Styling
+    style Gateway fill:#f5faff,stroke:#005cc5,stroke-width:2px
+    style Core fill:#fff,stroke:#333,stroke-dasharray: 5 5
+    style Inbound fill:#e1f5fe,stroke:#01579b
+    style Outbound fill:#e1f5fe,stroke:#01579b
 ```
-Client (OpenAI SDK / curl)
-  → Pingora accepts connection
-  → request_filter: route matching, global + route plugins, provider selection
-  → upstream_peer: resolve host:port + TLS
-  → upstream_request_filter: set provider path + headers
-  → request_body_filter: translate OpenAI → provider format, run pre-call guardrails
-  → [Pingora proxies to upstream over TLS]
-  → response_filter: circuit breaker, add gateway headers
-  → upstream_response_body_filter: translate provider → OpenAI format, run post-call guardrails
-  → logging: metrics, cost calculation, plugin logging
-  → Client receives OpenAI-format response
+
+### Routing & Failover
+
+```mermaid
+flowchart LR
+    Req["Incoming Request"] --> Match["Route Match"]
+
+    Match --> Strategy{Strategy?}
+
+    Strategy -->|fallback| FB["Try Primary then Fallbacks"]
+    Strategy -->|weighted| WB["Distribute by Weight"]
+    Strategy -->|round_robin| RR["Even Rotation"]
+    Strategy -->|least_connections| LC["Route to Least Busy"]
+
+    FB --> CB{"Circuit Breaker"}
+    WB --> CB
+    RR --> CB
+    LC --> CB
+
+    CB -->|Closed| Send["Send to Provider"]
+    CB -->|Open| Skip["Skip to Next Provider"]
+    CB -->|Half-Open| Probe["Probe with Single Request"]
+
+    Send --> Success["Record Success"]
+    Send --> Fail["Record Failure"]
+    Probe --> Success
+    Probe --> Fail
+
+    Fail -->|">= threshold"| Open["Open Circuit<br/><sub>60s cooldown</sub>"]
+
+    style Gateway fill:#f5faff,stroke:#005cc5,stroke-width:2px
+    style CB fill:#fff3cd,stroke:#856404
+    style Open fill:#f8d7da,stroke:#842029
+    style Success fill:#d1e7dd,stroke:#0f5132
+    style Fail fill:#f8d7da,stroke:#842029
 ```
 
 ## Performance

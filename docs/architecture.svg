@@ -1,0 +1,242 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 700" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <linearGradient id="gatewayGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#005cc5"/>
+      <stop offset="100%" style="stop-color:#0046a0"/>
+    </linearGradient>
+    <linearGradient id="pluginGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#5b21b6"/>
+      <stop offset="100%" style="stop-color:#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="translateGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0369a1"/>
+      <stop offset="100%" style="stop-color:#0284c7"/>
+    </linearGradient>
+    <linearGradient id="routeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#b45309"/>
+      <stop offset="100%" style="stop-color:#d97706"/>
+    </linearGradient>
+    <linearGradient id="clientGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#047857"/>
+      <stop offset="100%" style="stop-color:#059669"/>
+    </linearGradient>
+    <linearGradient id="providerGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#be123c"/>
+      <stop offset="100%" style="stop-color:#e11d48"/>
+    </linearGradient>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.1"/>
+    </filter>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#059669"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#e11d48"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="700" fill="#ffffff" rx="8"/>
+
+  <!-- Title -->
+  <text x="550" y="38" text-anchor="middle" fill="#1e293b" font-size="22" font-weight="700" letter-spacing="0.3">MaxLLM Gateway Architecture</text>
+  <text x="550" y="58" text-anchor="middle" fill="#64748b" font-size="13">High-performance AI gateway built on Pingora</text>
+
+  <!-- CLIENTS (left) -->
+  <g transform="translate(30, 150)">
+    <text x="55" y="-14" text-anchor="middle" fill="#047857" font-size="11" font-weight="600" letter-spacing="1.5">CLIENTS</text>
+
+    <rect x="0" y="0" width="110" height="44" rx="8" fill="url(#clientGrad)" filter="url(#shadow)"/>
+    <text x="55" y="19" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">OpenAI SDK</text>
+    <text x="55" y="33" text-anchor="middle" fill="#d1fae5" font-size="9">Python / Node</text>
+
+    <rect x="0" y="60" width="110" height="44" rx="8" fill="url(#clientGrad)" filter="url(#shadow)"/>
+    <text x="55" y="79" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">curl / HTTP</text>
+    <text x="55" y="93" text-anchor="middle" fill="#d1fae5" font-size="9">REST API</text>
+
+    <rect x="0" y="120" width="110" height="44" rx="8" fill="url(#clientGrad)" filter="url(#shadow)"/>
+    <text x="55" y="139" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Your App</text>
+    <text x="55" y="153" text-anchor="middle" fill="#d1fae5" font-size="9">Any Language</text>
+
+    <rect x="0" y="180" width="110" height="44" rx="8" fill="url(#clientGrad)" filter="url(#shadow)"/>
+    <text x="55" y="199" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Provider SDK</text>
+    <text x="55" y="213" text-anchor="middle" fill="#d1fae5" font-size="9">Native Format</text>
+  </g>
+
+  <!-- Arrows: Clients to Gateway -->
+  <g stroke="#059669" stroke-width="2" fill="none" opacity="0.5">
+    <line x1="145" y1="172" x2="218" y2="268" marker-end="url(#arrowGreen)"/>
+    <line x1="145" y1="212" x2="218" y2="298" marker-end="url(#arrowGreen)"/>
+    <line x1="145" y1="272" x2="218" y2="328" marker-end="url(#arrowGreen)"/>
+    <line x1="145" y1="332" x2="218" y2="358" marker-end="url(#arrowGreen)"/>
+  </g>
+
+  <!-- GATEWAY (center) -->
+  <g transform="translate(220, 82)">
+    <!-- Main box -->
+    <rect x="0" y="0" width="620" height="540" rx="12" fill="#f8fafc" stroke="#005cc5" stroke-width="2" filter="url(#shadow)"/>
+    <rect x="0" y="0" width="620" height="44" rx="12" fill="url(#gatewayGrad)"/>
+    <rect x="0" y="30" width="620" height="14" fill="url(#gatewayGrad)"/>
+    <text x="310" y="28" text-anchor="middle" fill="#fff" font-size="15" font-weight="700">MaxLLM Gateway</text>
+    <text x="595" y="28" text-anchor="end" fill="#bfdbfe" font-size="10">Pingora</text>
+
+    <!-- Row 1: Plugins -->
+    <rect x="20" y="58" width="580" height="96" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1"/>
+    <text x="310" y="76" text-anchor="middle" fill="#5b21b6" font-size="11" font-weight="600" letter-spacing="1">PLUGIN CHAIN</text>
+
+    <rect x="34" y="86" width="80" height="26" rx="13" fill="url(#pluginGrad)"/>
+    <text x="74" y="103" text-anchor="middle" fill="#fff" font-size="10" font-weight="500">Auth</text>
+
+    <rect x="122" y="86" width="80" height="26" rx="13" fill="url(#pluginGrad)"/>
+    <text x="162" y="103" text-anchor="middle" fill="#fff" font-size="10" font-weight="500">Rate Limit</text>
+
+    <rect x="210" y="86" width="64" height="26" rx="13" fill="url(#pluginGrad)"/>
+    <text x="242" y="103" text-anchor="middle" fill="#fff" font-size="10" font-weight="500">CORS</text>
+
+    <rect x="282" y="86" width="64" height="26" rx="13" fill="url(#pluginGrad)"/>
+    <text x="314" y="103" text-anchor="middle" fill="#fff" font-size="10" font-weight="500">Cache</text>
+
+    <rect x="354" y="86" width="82" height="26" rx="13" fill="url(#pluginGrad)"/>
+    <text x="395" y="103" text-anchor="middle" fill="#fff" font-size="10" font-weight="500">PII Filter</text>
+
+    <rect x="444" y="86" width="72" height="26" rx="13" fill="url(#pluginGrad)"/>
+    <text x="480" y="103" text-anchor="middle" fill="#fff" font-size="10" font-weight="500">Guardrails</text>
+
+    <rect x="524" y="86" width="64" height="26" rx="13" fill="#ede9fe" stroke="#7c3aed" stroke-width="1"/>
+    <text x="556" y="103" text-anchor="middle" fill="#5b21b6" font-size="10">+7 more</text>
+
+    <text x="310" y="142" text-anchor="middle" fill="#7c3aed" font-size="9">request_filter  /  on_request  /  on_upstream_request  /  on_response  /  on_response_body  /  on_logging</text>
+
+    <!-- Row 2: Routing -->
+    <rect x="20" y="168" width="580" height="84" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1"/>
+    <text x="310" y="186" text-anchor="middle" fill="#92400e" font-size="11" font-weight="600" letter-spacing="1">SMART ROUTING</text>
+
+    <rect x="38" y="198" width="90" height="40" rx="6" fill="url(#routeGrad)"/>
+    <text x="83" y="214" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Fallback</text>
+    <text x="83" y="228" text-anchor="middle" fill="#fef3c7" font-size="8">A then B then C</text>
+
+    <rect x="140" y="198" width="90" height="40" rx="6" fill="url(#routeGrad)"/>
+    <text x="185" y="214" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Weighted</text>
+    <text x="185" y="228" text-anchor="middle" fill="#fef3c7" font-size="8">70 / 20 / 10</text>
+
+    <rect x="242" y="198" width="100" height="40" rx="6" fill="url(#routeGrad)"/>
+    <text x="292" y="214" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Round Robin</text>
+    <text x="292" y="228" text-anchor="middle" fill="#fef3c7" font-size="8">A, B, C, A, B...</text>
+
+    <rect x="354" y="198" width="106" height="40" rx="6" fill="url(#routeGrad)"/>
+    <text x="407" y="214" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Least Conn</text>
+    <text x="407" y="228" text-anchor="middle" fill="#fef3c7" font-size="8">min(active)</text>
+
+    <rect x="472" y="198" width="116" height="40" rx="6" fill="#fffbeb" stroke="#d97706" stroke-width="1" stroke-dasharray="4,3"/>
+    <text x="530" y="214" text-anchor="middle" fill="#92400e" font-size="10" font-weight="600">Circuit Breaker</text>
+    <text x="530" y="228" text-anchor="middle" fill="#b45309" font-size="8">lock-free atomics</text>
+
+    <!-- Row 3: Translation -->
+    <rect x="20" y="266" width="580" height="84" rx="8" fill="#f0f9ff" stroke="#0284c7" stroke-width="1"/>
+    <text x="310" y="284" text-anchor="middle" fill="#0369a1" font-size="11" font-weight="600" letter-spacing="1">FORMAT TRANSLATION</text>
+
+    <rect x="38" y="296" width="170" height="40" rx="6" fill="url(#translateGrad)"/>
+    <text x="123" y="312" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Translated</text>
+    <text x="123" y="326" text-anchor="middle" fill="#bae6fd" font-size="8">OpenAI to/from Provider</text>
+
+    <rect x="220" y="296" width="170" height="40" rx="6" fill="url(#translateGrad)"/>
+    <text x="305" y="312" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Native</text>
+    <text x="305" y="326" text-anchor="middle" fill="#bae6fd" font-size="8">Provider Format (as-is)</text>
+
+    <rect x="402" y="296" width="170" height="40" rx="6" fill="url(#translateGrad)"/>
+    <text x="487" y="312" text-anchor="middle" fill="#fff" font-size="10" font-weight="600">Passthrough</text>
+    <text x="487" y="326" text-anchor="middle" fill="#bae6fd" font-size="8">Raw Bytes (zero copy)</text>
+
+    <!-- Row 4: Observability + Admin -->
+    <rect x="20" y="364" width="278" height="74" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+    <text x="159" y="382" text-anchor="middle" fill="#475569" font-size="11" font-weight="600" letter-spacing="1">OBSERVABILITY</text>
+    <text x="159" y="400" text-anchor="middle" fill="#334155" font-size="10">Prometheus Metrics</text>
+    <text x="159" y="414" text-anchor="middle" fill="#64748b" font-size="9">requests / tokens / latency / fallbacks</text>
+    <text x="159" y="428" text-anchor="middle" fill="#64748b" font-size="9">X-MaxLLM-Provider / X-MaxLLM-Upstream-Ms</text>
+
+    <rect x="312" y="364" width="288" height="74" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+    <text x="456" y="382" text-anchor="middle" fill="#475569" font-size="11" font-weight="600" letter-spacing="1">ADMIN &amp; MULTI-TENANCY</text>
+    <text x="456" y="400" text-anchor="middle" fill="#334155" font-size="10">Virtual Keys / Teams / Budgets</text>
+    <text x="456" y="414" text-anchor="middle" fill="#64748b" font-size="9">per-key rate limits / model access control</text>
+    <text x="456" y="428" text-anchor="middle" fill="#64748b" font-size="9">cost tracking / spend reporting</text>
+
+    <!-- Row 5: Streaming -->
+    <rect x="20" y="452" width="580" height="34" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="310" y="474" text-anchor="middle" fill="#475569" font-size="10">SSE Streaming: Anthropic SSE / Gemini SSE / Cohere SSE translated to OpenAI SSE chunks</text>
+
+    <!-- Row 6: Config -->
+    <rect x="20" y="498" width="580" height="28" rx="6" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="310" y="517" text-anchor="middle" fill="#64748b" font-size="10">Config: maxllm.toml  /  ${ENV_VAR} expansion  /  startup validation  /  model aliases</text>
+  </g>
+
+  <!-- PROVIDERS (right) -->
+  <g transform="translate(870, 100)">
+    <text x="100" y="-4" text-anchor="middle" fill="#be123c" font-size="11" font-weight="600" letter-spacing="1.5">PROVIDERS</text>
+
+    <rect x="20" y="12" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="34" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">OpenAI</text>
+
+    <rect x="20" y="56" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="78" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Anthropic</text>
+
+    <rect x="20" y="100" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="122" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Google Gemini</text>
+
+    <rect x="20" y="144" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="166" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Azure OpenAI</text>
+
+    <rect x="20" y="188" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="210" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">AWS Bedrock</text>
+
+    <rect x="20" y="232" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="254" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Groq</text>
+
+    <rect x="20" y="276" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="298" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Together AI</text>
+
+    <rect x="20" y="320" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="342" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Mistral AI</text>
+
+    <rect x="20" y="364" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="386" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">DeepSeek</text>
+
+    <rect x="20" y="408" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="430" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">xAI (Grok)</text>
+
+    <rect x="20" y="452" width="160" height="34" rx="8" fill="url(#providerGrad)" filter="url(#shadow)"/>
+    <text x="100" y="474" text-anchor="middle" fill="#fff" font-size="11" font-weight="600">Cohere</text>
+
+    <rect x="20" y="496" width="160" height="34" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="1" stroke-dasharray="4,3" filter="url(#shadow)"/>
+    <text x="100" y="518" text-anchor="middle" fill="#be123c" font-size="11" font-weight="500">+4 more</text>
+  </g>
+
+  <!-- Arrows: Gateway to Providers -->
+  <g stroke="#e11d48" stroke-width="1.5" fill="none" opacity="0.4">
+    <line x1="840" y1="190" x2="890" y2="130" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="220" x2="890" y2="174" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="250" x2="890" y2="218" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="280" x2="890" y2="262" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="310" x2="890" y2="306" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="340" x2="890" y2="350" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="370" x2="890" y2="394" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="400" x2="890" y2="438" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="420" x2="890" y2="482" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="440" x2="890" y2="526" marker-end="url(#arrowRed)"/>
+    <line x1="840" y1="460" x2="890" y2="570" marker-end="url(#arrowRed)"/>
+  </g>
+
+  <!-- Bottom: flow summary -->
+  <rect x="80" y="652" width="220" height="28" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="1"/>
+  <text x="190" y="671" text-anchor="middle" fill="#047857" font-size="11" font-weight="600">OpenAI Format In</text>
+
+  <text x="335" y="671" text-anchor="middle" fill="#94a3b8" font-size="16" font-weight="500">--></text>
+
+  <rect x="370" y="652" width="360" height="28" rx="14" fill="#eff6ff" stroke="#005cc5" stroke-width="1"/>
+  <text x="550" y="671" text-anchor="middle" fill="#005cc5" font-size="11" font-weight="600">Auto-translate and route to any provider</text>
+
+  <text x="765" y="671" text-anchor="middle" fill="#94a3b8" font-size="16" font-weight="500">--></text>
+
+  <rect x="800" y="652" width="220" height="28" rx="14" fill="#ecfdf5" stroke="#059669" stroke-width="1"/>
+  <text x="910" y="671" text-anchor="middle" fill="#047857" font-size="11" font-weight="600">OpenAI Format Out</text>
+
+</svg>
