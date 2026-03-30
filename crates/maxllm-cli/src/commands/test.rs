@@ -18,10 +18,16 @@ pub async fn run(config_path: PathBuf) -> i32 {
         return 0;
     }
 
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .unwrap();
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: failed to build HTTP client: {e}");
+            return 1;
+        }
+    };
 
     let mut all_ok = true;
 

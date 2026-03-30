@@ -3,7 +3,6 @@
 
 //! SQLite-backed implementation of [`AdminStore`].
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -23,6 +22,8 @@ impl SqliteStore {
         let conn = Connection::open(path)
             .map_err(|e| StoreError::Internal(format!("failed to open SQLite: {e}")))?;
 
+        Self::set_pragmas(&conn)?;
+
         let store = Self {
             conn: Mutex::new(conn),
         };
@@ -34,11 +35,24 @@ impl SqliteStore {
     pub fn in_memory() -> Result<Self, StoreError> {
         let conn = Connection::open_in_memory()
             .map_err(|e| StoreError::Internal(format!("failed to open in-memory SQLite: {e}")))?;
+
+        Self::set_pragmas(&conn)?;
+
         let store = Self {
             conn: Mutex::new(conn),
         };
         store.init_tables()?;
         Ok(store)
+    }
+
+    /// Set connection-level pragmas.
+    fn set_pragmas(conn: &Connection) -> Result<(), StoreError> {
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000;
+             PRAGMA foreign_keys = ON;",
+        )
+        .map_err(|e| StoreError::Internal(format!("failed to set pragmas: {e}")))?;
+        Ok(())
     }
 
     fn init_tables(&self) -> Result<(), StoreError> {
@@ -90,7 +104,8 @@ impl SqliteStore {
                 tokens_out INTEGER NOT NULL,
                 cost_usd REAL NOT NULL,
                 request_id TEXT,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (key_id) REFERENCES virtual_keys(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS request_logs (
@@ -462,62 +477,83 @@ impl AdminStore for SqliteStore {
     }
 
     fn get_spend_summary(&self, key_id: Option<&str>) -> Result<SpendReport, StoreError> {
-        // For simplicity, load records and compute in memory
-        // (for production, this would be SQL aggregation)
-        let records = self.get_spend_logs(key_id, usize::MAX)?;
+        let conn = self.conn.lock().map_err(|_| StoreError::LockPoisoned)?;
 
-        let mut total_spend = 0.0_f64;
-        let mut total_requests = 0_u64;
-        let mut total_in = 0_u64;
-        let mut total_out = 0_u64;
-
-        let mut by_model: HashMap<String, SpendByGroup> = HashMap::new();
-        let mut by_provider: HashMap<String, SpendByGroup> = HashMap::new();
-        let mut by_key: HashMap<String, SpendByGroup> = HashMap::new();
-
-        for r in &records {
-            total_spend += r.cost_usd;
-            total_requests += 1;
-            total_in += r.tokens_in;
-            total_out += r.tokens_out;
-
-            for (map, name) in [
-                (&mut by_model, &r.model),
-                (&mut by_provider, &r.provider),
-                (&mut by_key, &r.key_id),
-            ] {
-                let entry = map.entry(name.clone()).or_insert_with(|| SpendByGroup {
-                    name: name.clone(),
-                    spend_usd: 0.0,
-                    requests: 0,
-                    tokens_in: 0,
-                    tokens_out: 0,
-                });
-                entry.spend_usd += r.cost_usd;
-                entry.requests += 1;
-                entry.tokens_in += r.tokens_in;
-                entry.tokens_out += r.tokens_out;
-            }
-        }
-
-        let collect = |m: HashMap<String, SpendByGroup>| -> Vec<SpendByGroup> {
-            let mut v: Vec<SpendByGroup> = m.into_values().collect();
-            v.sort_by(|a, b| {
-                b.spend_usd
-                    .partial_cmp(&a.spend_usd)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            v
+        // Build WHERE clause for optional key_id filter
+        let where_clause = if key_id.is_some() {
+            "WHERE key_id = ?1"
+        } else {
+            ""
         };
+
+        // Totals
+        let totals_sql = format!(
+            "SELECT COALESCE(SUM(cost_usd), 0) as total_spend,
+                    COUNT(*) as total_requests,
+                    COALESCE(SUM(tokens_in), 0) as total_in,
+                    COALESCE(SUM(tokens_out), 0) as total_out
+             FROM spend_logs {where_clause}"
+        );
+        let mut stmt = conn.prepare(&totals_sql)
+            .map_err(|e| StoreError::Internal(e.to_string()))?;
+        let bind_params: Vec<Box<dyn rusqlite::types::ToSql>> = if let Some(kid) = key_id {
+            vec![Box::new(kid.to_string())]
+        } else {
+            vec![]
+        };
+        let bind_refs: Vec<&dyn rusqlite::types::ToSql> = bind_params.iter().map(|p| p.as_ref()).collect();
+        let (total_spend, total_requests, total_in, total_out) = stmt
+            .query_row(bind_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, f64>(0)?,
+                    row.get::<_, u64>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u64>(3)?,
+                ))
+            })
+            .map_err(|e| StoreError::Internal(e.to_string()))?;
+
+        // Helper to query GROUP BY aggregations
+        let query_group = |group_col: &str| -> Result<Vec<SpendByGroup>, StoreError> {
+            let sql = format!(
+                "SELECT {group_col} as name,
+                        COALESCE(SUM(cost_usd), 0) as spend_usd,
+                        COUNT(*) as requests,
+                        COALESCE(SUM(tokens_in), 0) as tokens_in,
+                        COALESCE(SUM(tokens_out), 0) as tokens_out
+                 FROM spend_logs {where_clause}
+                 GROUP BY {group_col}
+                 ORDER BY spend_usd DESC"
+            );
+            let mut stmt = conn.prepare(&sql)
+                .map_err(|e| StoreError::Internal(e.to_string()))?;
+            let rows = stmt
+                .query_map(bind_refs.as_slice(), |row| {
+                    Ok(SpendByGroup {
+                        name: row.get(0)?,
+                        spend_usd: row.get(1)?,
+                        requests: row.get(2)?,
+                        tokens_in: row.get(3)?,
+                        tokens_out: row.get(4)?,
+                    })
+                })
+                .map_err(|e| StoreError::Internal(e.to_string()))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StoreError::Internal(e.to_string()))
+        };
+
+        let by_model = query_group("model")?;
+        let by_provider = query_group("provider")?;
+        let by_key = query_group("key_id")?;
 
         Ok(SpendReport {
             total_spend_usd: total_spend,
             total_requests,
             total_tokens_in: total_in,
             total_tokens_out: total_out,
-            by_model: collect(by_model),
-            by_provider: collect(by_provider),
-            by_key: collect(by_key),
+            by_model,
+            by_provider,
+            by_key,
         })
     }
 
@@ -734,6 +770,8 @@ mod tests {
     #[test]
     fn sqlite_spend_summary() {
         let store = SqliteStore::in_memory().unwrap();
+        // Create the referenced key first (FK constraint)
+        store.create_key(make_key("k1", "hash1")).unwrap();
         store
             .record_spend(SpendRecord {
                 id: "s1".into(),

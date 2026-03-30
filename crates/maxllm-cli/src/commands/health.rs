@@ -5,10 +5,16 @@
 pub async fn run(url: &str) -> i32 {
     let health_url = format!("{}/health", url.trim_end_matches('/'));
 
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
-        .unwrap();
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: failed to build HTTP client: {e}");
+            return 1;
+        }
+    };
 
     match client.get(&health_url).send().await {
         Ok(resp) => {

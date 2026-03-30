@@ -5,10 +5,16 @@
 pub async fn list(url: &str, admin_key: &str) -> i32 {
     let api_url = format!("{}/admin/keys", url.trim_end_matches('/'));
 
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .unwrap();
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: failed to build HTTP client: {e}");
+            return 1;
+        }
+    };
 
     match client
         .get(&api_url)
@@ -66,10 +72,16 @@ pub async fn list(url: &str, admin_key: &str) -> i32 {
 pub async fn create(url: &str, admin_key: &str, name: &str) -> i32 {
     let api_url = format!("{}/admin/keys", url.trim_end_matches('/'));
 
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .unwrap();
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: failed to build HTTP client: {e}");
+            return 1;
+        }
+    };
 
     let body = serde_json::json!({ "name": name });
 

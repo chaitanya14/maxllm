@@ -697,10 +697,16 @@ impl ProxyHttp for AiGateway {
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
         let hot = self.hot.load();
-        let provider = hot
-            .providers
-            .get(&ctx.provider_name)
-            .expect("provider must exist after request_filter");
+        let provider = match hot.providers.get(&ctx.provider_name) {
+            Some(p) => p,
+            None => {
+                warn!(provider = %ctx.provider_name, "provider not found in upstream_peer (config may have been reloaded)");
+                return Err(pingora::Error::explain(
+                    pingora::ErrorType::HTTPStatus(502),
+                    format!("provider '{}' no longer exists", ctx.provider_name),
+                ));
+            }
+        };
 
         let mut peer = HttpPeer::new(
             (&*provider.host, provider.port),
@@ -721,10 +727,16 @@ impl ProxyHttp for AiGateway {
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
         let hot = self.hot.load();
-        let provider = hot
-            .providers
-            .get(&ctx.provider_name)
-            .expect("provider must exist");
+        let provider = match hot.providers.get(&ctx.provider_name) {
+            Some(p) => p,
+            None => {
+                warn!(provider = %ctx.provider_name, "provider not found in upstream_request_filter (config may have been reloaded)");
+                return Err(pingora::Error::explain(
+                    pingora::ErrorType::HTTPStatus(502),
+                    format!("provider '{}' no longer exists", ctx.provider_name),
+                ));
+            }
+        };
 
         // Set upstream path based on endpoint type
         let path = match ctx.endpoint_type {
@@ -868,8 +880,14 @@ impl ProxyHttp for AiGateway {
                             // Set up streaming passthrough (OpenAI SSE → client)
                             let provider = hot.providers.get(&ctx.provider_name);
                             if let Some(p) = provider {
-                                *ctx.stream_translator.lock().unwrap() =
-                                    Some(p.translator.streaming_translator());
+                                match ctx.stream_translator.lock() {
+                                Ok(mut guard) => {
+                                    *guard = Some(p.translator.streaming_translator());
+                                }
+                                Err(e) => {
+                                    warn!("stream_translator mutex poisoned: {e}");
+                                }
+                            }
                             }
                         }
                     }
@@ -909,10 +927,16 @@ impl ProxyHttp for AiGateway {
             ctx.body_translated = true;
 
             let hot = self.hot.load();
-            let provider = hot
-                .providers
-                .get(&ctx.provider_name)
-                .expect("provider must exist");
+            let provider = match hot.providers.get(&ctx.provider_name) {
+                Some(p) => p,
+                None => {
+                    warn!(provider = %ctx.provider_name, "provider not found in request_body_filter (config may have been reloaded)");
+                    return Err(pingora::Error::explain(
+                        pingora::ErrorType::HTTPStatus(502),
+                        format!("provider '{}' no longer exists", ctx.provider_name),
+                    ));
+                }
+            };
 
             if ctx.endpoint_type == EndpointType::Native {
                 // ── NATIVE MODE: parse for metadata only, forward body as-is ──
@@ -975,8 +999,14 @@ impl ProxyHttp for AiGateway {
 
                 // Set up native stream passthrough (passes chunks through unchanged)
                 if ctx.is_streaming {
-                    *ctx.stream_translator.lock().unwrap() =
-                        Some(Box::new(maxllm_translate::NativePassthroughStream));
+                    match ctx.stream_translator.lock() {
+                        Ok(mut guard) => {
+                            *guard = Some(Box::new(maxllm_translate::NativePassthroughStream));
+                        }
+                        Err(e) => {
+                            warn!("stream_translator mutex poisoned: {e}");
+                        }
+                    }
                 }
 
                 // Forward body as-is (no translation)
@@ -1116,8 +1146,14 @@ impl ProxyHttp for AiGateway {
                     Ok(translated) => {
                         if translated.is_streaming {
                             ctx.is_streaming = true;
-                            *ctx.stream_translator.lock().unwrap() =
-                                Some(provider.translator.streaming_translator());
+                            match ctx.stream_translator.lock() {
+                                Ok(mut guard) => {
+                                    *guard = Some(provider.translator.streaming_translator());
+                                }
+                                Err(e) => {
+                                    warn!("stream_translator mutex poisoned: {e}");
+                                }
+                            }
                         }
                         *body = Some(Bytes::from(translated.body));
                     }
@@ -1254,11 +1290,17 @@ impl ProxyHttp for AiGateway {
             if ctx.is_streaming {
                 // Streaming: pass through (NativePassthroughStream just copies bytes)
                 if let Some(data) = body.as_ref() {
-                    let mut guard = ctx.stream_translator.lock().unwrap();
-                    if let Some(translator) = guard.as_mut() {
-                        let translated = translator.process_chunk(data, end_of_stream);
-                        drop(guard);
-                        *body = Some(Bytes::from(translated));
+                    match ctx.stream_translator.lock() {
+                        Ok(mut guard) => {
+                            if let Some(translator) = guard.as_mut() {
+                                let translated = translator.process_chunk(data, end_of_stream);
+                                drop(guard);
+                                *body = Some(Bytes::from(translated));
+                            }
+                        }
+                        Err(e) => {
+                            warn!("stream_translator mutex poisoned in native streaming: {e}");
+                        }
                     }
                 }
             } else {
@@ -1385,11 +1427,17 @@ impl ProxyHttp for AiGateway {
                     }
                 }
             } else if let Some(data) = body.as_ref() {
-                let mut guard = ctx.stream_translator.lock().unwrap();
-                if let Some(translator) = guard.as_mut() {
-                    let translated = translator.process_chunk(data, end_of_stream);
-                    drop(guard);
-                    *body = Some(Bytes::from(translated));
+                match ctx.stream_translator.lock() {
+                    Ok(mut guard) => {
+                        if let Some(translator) = guard.as_mut() {
+                            let translated = translator.process_chunk(data, end_of_stream);
+                            drop(guard);
+                            *body = Some(Bytes::from(translated));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("stream_translator mutex poisoned in streaming: {e}");
+                    }
                 }
             }
         } else {

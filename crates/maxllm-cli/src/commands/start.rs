@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::path::PathBuf;
-
-const PID_FILE: &str = "/tmp/maxllm.pid";
+use std::process::Stdio;
 
 /// Start the gateway server by spawning the `maxllm-server` binary.
-pub fn run(config: PathBuf, port: Option<u16>, daemon: bool) -> i32 {
+pub fn run(config: PathBuf, daemon: bool) -> i32 {
     // Validate config exists
     if !config.exists() {
         eprintln!("Error: config file not found: {}", config.display());
@@ -28,28 +27,28 @@ pub fn run(config: PathBuf, port: Option<u16>, daemon: bool) -> i32 {
 
     if daemon {
         cmd.arg("--daemon");
-    }
-
-    // If port override specified, set an env var that could be used
-    // (the config itself must reference the port, but we print a hint)
-    if let Some(p) = port {
-        eprintln!("Note: --port {p} flag noted. Ensure your config's [server] listen address uses this port.");
+        // Proper daemon detachment: redirect stdio to /dev/null
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
     }
 
     eprintln!("Starting MaxLLM gateway...");
     eprintln!("  Config: {}", config.display());
     eprintln!("  Binary: {}", server_bin.display());
 
+    let pid_file = super::pid_file_path();
+
     match cmd.spawn() {
         Ok(child) => {
             let pid = child.id();
             // Write PID file
-            if let Err(e) = std::fs::write(PID_FILE, pid.to_string()) {
+            if let Err(e) = std::fs::write(&pid_file, pid.to_string()) {
                 eprintln!("Warning: failed to write PID file: {e}");
             }
             if daemon {
                 eprintln!("Gateway started in background (PID: {pid})");
-                eprintln!("PID file: {PID_FILE}");
+                eprintln!("PID file: {}", pid_file.display());
                 0
             } else {
                 eprintln!("Gateway started (PID: {pid})");
@@ -57,12 +56,12 @@ pub fn run(config: PathBuf, port: Option<u16>, daemon: bool) -> i32 {
                 let mut child = child;
                 match child.wait() {
                     Ok(status) => {
-                        let _ = std::fs::remove_file(PID_FILE);
+                        let _ = std::fs::remove_file(&pid_file);
                         status.code().unwrap_or(1)
                     }
                     Err(e) => {
                         eprintln!("Error waiting for gateway: {e}");
-                        let _ = std::fs::remove_file(PID_FILE);
+                        let _ = std::fs::remove_file(&pid_file);
                         1
                     }
                 }
