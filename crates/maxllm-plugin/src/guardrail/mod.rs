@@ -542,10 +542,7 @@ mod tests {
     #[test]
     fn test_guardrail_mode_from_str() {
         assert_eq!(GuardrailMode::parse("pre_call"), GuardrailMode::PreCall);
-        assert_eq!(
-            GuardrailMode::parse("post_call"),
-            GuardrailMode::PostCall
-        );
+        assert_eq!(GuardrailMode::parse("post_call"), GuardrailMode::PostCall);
         assert_eq!(GuardrailMode::parse("both"), GuardrailMode::Both);
         assert_eq!(GuardrailMode::parse("unknown"), GuardrailMode::PreCall);
     }
@@ -554,10 +551,7 @@ mod tests {
     fn test_guardrail_action_from_str() {
         assert_eq!(GuardrailAction::parse("block"), GuardrailAction::Block);
         assert_eq!(GuardrailAction::parse("redact"), GuardrailAction::Redact);
-        assert_eq!(
-            GuardrailAction::parse("log_only"),
-            GuardrailAction::LogOnly
-        );
+        assert_eq!(GuardrailAction::parse("log_only"), GuardrailAction::LogOnly);
         assert_eq!(GuardrailAction::parse("unknown"), GuardrailAction::Block);
     }
 

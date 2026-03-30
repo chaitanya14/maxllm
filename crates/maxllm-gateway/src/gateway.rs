@@ -1823,9 +1823,7 @@ fn normalize_error_response(
     // {"error": {"message": "...", "type": "...", "code": ...}}
     // Anthropic has top-level "type":"error", Gemini has "status" instead of "type".
     if let Some(err) = parsed.get("error") {
-        if err.get("message").is_some()
-            && err.get("type").is_some()
-            && parsed.get("type").is_none()
+        if err.get("message").is_some() && err.get("type").is_some() && parsed.get("type").is_none()
         {
             return None;
         }
