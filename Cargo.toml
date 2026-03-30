@@ -5,6 +5,7 @@ members = [
     "crates/maxllm-translate",
     "crates/maxllm-gateway",
     "crates/maxllm-admin",
+    "crates/maxllm-cli",
 ]
 resolver = "2"
 

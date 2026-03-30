@@ -62,6 +62,11 @@ pub struct RequestCtx {
     /// For passthrough mode: the path suffix after the route prefix to forward upstream.
     /// e.g., request to `/passthrough/anthropic/v1/messages` → suffix `/v1/messages`.
     pub passthrough_path: Option<String>,
+    /// Upstream response HTTP status code (set in response_filter).
+    pub upstream_status: u16,
+    /// Whether to preserve/update Content-Length on the upstream request
+    /// (for providers like OpenAI that reject chunked encoding).
+    pub keep_request_content_length: bool,
 }
 
 impl RequestCtx {
@@ -90,6 +95,8 @@ impl RequestCtx {
             applied_guardrails: Vec::new(),
             endpoint_type: EndpointType::default(),
             passthrough_path: None,
+            upstream_status: 0,
+            keep_request_content_length: false,
         }
     }
 }

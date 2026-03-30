@@ -59,6 +59,9 @@ pub struct AdminConfig {
     /// Enable admin API endpoints under /admin/*.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Path to SQLite database file for persistent storage.
+    /// If not set, uses in-memory storage.
+    pub db_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

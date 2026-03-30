@@ -20,9 +20,10 @@ enabled = true
 "claude-3" = "claude-sonnet-4-20250514"
 
 # --- Admin API (optional) ---
-# [admin]
-# master_key = "${MAXLLM_MASTER_KEY}"
-# enabled = true
+[admin]
+master_key = "sk-maxllm-dev-key"
+enabled = true
+db_path = "maxllm.db"
 
 # --- Model Cost Overrides (supplement built-in costs) ---
 # [model_costs."custom-model"]

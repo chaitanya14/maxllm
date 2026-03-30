@@ -37,7 +37,7 @@ impl TestGateway {
             .write_all(config_str.as_bytes())
             .expect("write config");
 
-        let binary = env!("CARGO_BIN_EXE_maxllm");
+        let binary = env!("CARGO_BIN_EXE_maxllm-server");
         let child = Command::new(binary)
             .arg("--config")
             .arg(config_file.path())
@@ -906,6 +906,192 @@ provider = "gemini"
 
     // Verify token usage is present
     assert!(body["usage"]["prompt_tokens"].as_u64().unwrap() > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Error normalization tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_anthropic_error_normalized_to_openai_format() {
+    let mock = MockServer::start().await;
+
+    // Respond with Anthropic error format
+    let anthropic_error = json!({
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "model: field required"
+        }
+    });
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(anthropic_error))
+        .mount(&mock)
+        .await;
+
+    let gw = TestGateway::start(ANTHROPIC_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let resp = c
+        .post(gw.url("/v1/chat/completions"))
+        .header("Authorization", "Bearer test-key-123")
+        .json(&chat_body("claude-sonnet-4-20250514", "hi"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let body: Value = resp.json().await.unwrap();
+    // Should be normalized to OpenAI error format
+    assert!(body["error"]["message"].is_string());
+    assert_eq!(body["error"]["message"], "model: field required");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert_eq!(body["error"]["code"], 400);
+}
+
+#[tokio::test]
+async fn test_gemini_error_normalized_to_openai_format() {
+    let mock = MockServer::start().await;
+
+    // Respond with Gemini error format
+    let gemini_error = json!({
+        "error": {
+            "code": 400,
+            "message": "API key not valid.",
+            "status": "INVALID_ARGUMENT"
+        }
+    });
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(gemini_error))
+        .mount(&mock)
+        .await;
+
+    let gw = TestGateway::start(GEMINI_MOCK_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let resp = c
+        .post(gw.url("/v1/gemini"))
+        .header("Authorization", "Bearer test-key-123")
+        .json(&chat_body("gemini-2.5-flash", "hi"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    let body: Value = resp.json().await.unwrap();
+    // Should be normalized to OpenAI error format
+    assert_eq!(body["error"]["message"], "API key not valid.");
+    assert_eq!(body["error"]["type"], "INVALID_ARGUMENT");
+    assert_eq!(body["error"]["code"], 400);
+}
+
+// ---------------------------------------------------------------------------
+// /v1/models endpoint
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_v1_models_endpoint() {
+    let mock = MockServer::start().await;
+    let gw = TestGateway::start(MOCK_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    // GET /v1/models should return an OpenAI-compatible model list
+    let resp = c.get(gw.url("/v1/models")).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["object"], "list");
+
+    let data = body["data"].as_array().unwrap();
+    assert!(!data.is_empty(), "model list should not be empty");
+
+    // Each model should have id, object, owned_by
+    let first = &data[0];
+    assert!(first["id"].is_string());
+    assert_eq!(first["object"], "model");
+    assert!(first["owned_by"].is_string());
+
+    // The mock config uses an OpenAI provider, so we should see OpenAI models
+    let model_ids: Vec<&str> = data.iter().map(|m| m["id"].as_str().unwrap()).collect();
+    assert!(model_ids.contains(&"gpt-4o"), "should contain gpt-4o");
+
+    // Model alias "gpt-4" should also be listed
+    assert!(model_ids.contains(&"gpt-4"), "should contain gpt-4 alias");
+}
+
+// ---------------------------------------------------------------------------
+// /v1/embeddings endpoint
+// ---------------------------------------------------------------------------
+
+const EMBEDDINGS_CONFIG: &str = r#"
+global_plugins = ["api_auth"]
+
+[server]
+listen = "127.0.0.1:{PORT}"
+threads = 1
+
+[plugins.api_auth]
+category = "key_auth"
+header = "Authorization"
+strip_prefix = "Bearer "
+keys = ["test-key-123"]
+
+[providers.mock_openai]
+kind = "openai"
+base_url = "{MOCK_URL}"
+api_key = "fake-key"
+
+[[routes]]
+path = "/v1/embeddings"
+provider = "mock_openai"
+endpoint_type = "embeddings"
+"#;
+
+#[tokio::test]
+async fn test_embeddings_endpoint() {
+    let mock = MockServer::start().await;
+
+    // Respond with OpenAI embeddings format
+    let embeddings_response = json!({
+        "object": "list",
+        "data": [{
+            "object": "embedding",
+            "index": 0,
+            "embedding": [0.0023, -0.0091, 0.0152]
+        }],
+        "model": "text-embedding-3-small",
+        "usage": {
+            "prompt_tokens": 8,
+            "total_tokens": 8
+        }
+    });
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(embeddings_response))
+        .mount(&mock)
+        .await;
+
+    let gw = TestGateway::start(EMBEDDINGS_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let resp = c
+        .post(gw.url("/v1/embeddings"))
+        .header("Authorization", "Bearer test-key-123")
+        .json(&json!({
+            "model": "text-embedding-3-small",
+            "input": "Hello world"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["object"], "list");
+    let data = body["data"].as_array().unwrap();
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["object"], "embedding");
+    assert!(data[0]["embedding"].as_array().unwrap().len() > 0);
+    assert_eq!(body["usage"]["prompt_tokens"], 8);
 }
 
 /// Test Gemini with system prompt and multi-turn.

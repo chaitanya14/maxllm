@@ -1,0 +1,12 @@
+target/
+.git/
+.github/
+docs/
+tests/
+examples/
+perf/
+*.md
+!CLAUDE.md
+.env
+.env.*
+*.db

@@ -5,8 +5,10 @@
 //! cost definitions, and API request/response types.
 
 use chrono::{DateTime, Utc};
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+
+/// Type alias — use f64 for now; swap to rust_decimal::Decimal when precision matters.
+type Decimal = f64;
 
 // ---------------------------------------------------------------------------
 // Core domain models
@@ -167,6 +169,26 @@ pub struct SpendByGroup {
     pub requests: u64,
     pub tokens_in: u64,
     pub tokens_out: u64,
+}
+
+/// A per-request log entry for observability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestLog {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub provider: String,
+    pub model: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub cost_usd: Decimal,
+    pub latency_ms: u64,
+    pub status: u16,
+    pub request_id: Option<String>,
+    pub client_ip: Option<String>,
+    pub route_path: String,
+    pub endpoint_type: String,
+    pub fallback_used: bool,
+    pub error: Option<String>,
 }
 
 /// RBAC role for future use.
