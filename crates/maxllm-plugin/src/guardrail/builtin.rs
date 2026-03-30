@@ -22,7 +22,10 @@ pub struct PromptGuardGuardrail {
 impl PromptGuardGuardrail {
     pub fn from_config(config: &GuardrailConfig) -> Result<Self, GuardrailError> {
         let mut table = config.params.clone();
-        table.insert("category".into(), toml::Value::String("prompt_guard".into()));
+        table.insert(
+            "category".into(),
+            toml::Value::String("prompt_guard".into()),
+        );
         let inner = crate::builtin::PromptGuardPlugin::from_config(&config.name, &table)
             .map_err(|e| GuardrailError::Config(e.to_string()))?;
         Ok(Self { inner })
@@ -90,16 +93,12 @@ impl Guardrail for PiiFilterGuardrail {
             return GuardrailVerdict::Pass;
         }
 
-        let pattern_names: Vec<String> =
-            matches.iter().map(|m| m.pattern_name.clone()).collect();
+        let pattern_names: Vec<String> = matches.iter().map(|m| m.pattern_name.clone()).collect();
 
         match self.action {
             crate::builtin::pii_filter::PiiAction::Block => GuardrailVerdict::Block {
                 guardrail: "pii_filter".into(),
-                reason: format!(
-                    "PII detected: {}",
-                    pattern_names.join(", ")
-                ),
+                reason: format!("PII detected: {}", pattern_names.join(", ")),
             },
             crate::builtin::pii_filter::PiiAction::Redact => {
                 let redacted = self.inner.redact_text(input.content);
@@ -123,16 +122,12 @@ impl Guardrail for PiiFilterGuardrail {
             return GuardrailVerdict::Pass;
         }
 
-        let pattern_names: Vec<String> =
-            matches.iter().map(|m| m.pattern_name.clone()).collect();
+        let pattern_names: Vec<String> = matches.iter().map(|m| m.pattern_name.clone()).collect();
 
         match self.action {
             crate::builtin::pii_filter::PiiAction::Block => GuardrailVerdict::Block {
                 guardrail: "pii_filter".into(),
-                reason: format!(
-                    "PII detected in response: {}",
-                    pattern_names.join(", ")
-                ),
+                reason: format!("PII detected in response: {}", pattern_names.join(", ")),
             },
             crate::builtin::pii_filter::PiiAction::Redact => {
                 let redacted = self.inner.redact_text(output.content);
@@ -161,10 +156,7 @@ pub struct SecretScanGuardrail {
 impl SecretScanGuardrail {
     pub fn from_config(config: &GuardrailConfig) -> Result<Self, GuardrailError> {
         let mut table = config.params.clone();
-        table.insert(
-            "category".into(),
-            toml::Value::String("secret_scan".into()),
-        );
+        table.insert("category".into(), toml::Value::String("secret_scan".into()));
         table.insert("action".into(), toml::Value::String(config.action.clone()));
         let inner = crate::builtin::SecretScanPlugin::from_config(&config.name, &table)
             .map_err(|e| GuardrailError::Config(e.to_string()))?;
@@ -185,16 +177,12 @@ impl Guardrail for SecretScanGuardrail {
             return GuardrailVerdict::Pass;
         }
 
-        let pattern_names: Vec<String> =
-            matches.iter().map(|m| m.pattern_name.clone()).collect();
+        let pattern_names: Vec<String> = matches.iter().map(|m| m.pattern_name.clone()).collect();
 
         match self.action {
             crate::builtin::secret_scan::SecretScanAction::Block => GuardrailVerdict::Block {
                 guardrail: "secret_scan".into(),
-                reason: format!(
-                    "Credentials/secrets detected: {}",
-                    pattern_names.join(", ")
-                ),
+                reason: format!("Credentials/secrets detected: {}", pattern_names.join(", ")),
             },
             crate::builtin::secret_scan::SecretScanAction::Redact => {
                 let redacted = self.inner.redact_text(input.content);
@@ -275,10 +263,7 @@ pub struct RegexGuardGuardrail {
 impl RegexGuardGuardrail {
     pub fn from_config(config: &GuardrailConfig) -> Result<Self, GuardrailError> {
         let mut table = config.params.clone();
-        table.insert(
-            "category".into(),
-            toml::Value::String("regex_guard".into()),
-        );
+        table.insert("category".into(), toml::Value::String("regex_guard".into()));
         table.insert("action".into(), toml::Value::String(config.action.clone()));
         let inner = crate::builtin::RegexGuardPlugin::from_config(&config.name, &table)
             .map_err(|e| GuardrailError::Config(e.to_string()))?;

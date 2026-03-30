@@ -105,9 +105,7 @@ impl Plugin for KeyAuthPlugin {
             ctx.client_id = Some(key.to_string());
 
             if self.hide_credentials {
-                let _ = session
-                    .req_header_mut()
-                    .remove_header(&self.header);
+                let _ = session.req_header_mut().remove_header(&self.header);
             }
 
             Ok(RequestAction::Continue)

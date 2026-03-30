@@ -72,10 +72,7 @@ pub enum GuardrailVerdict {
     /// Content is allowed.
     Pass,
     /// Content is blocked.
-    Block {
-        guardrail: String,
-        reason: String,
-    },
+    Block { guardrail: String, reason: String },
     /// Content was modified (redacted).
     Modify {
         guardrail: String,
@@ -190,9 +187,7 @@ impl GuardrailEngine {
 
                 // If route specifies guardrails, entry must be in that list
                 if let Some(route_names) = route_guardrails {
-                    if !route_names.is_empty()
-                        && !route_names.iter().any(|n| n == &e.name)
-                    {
+                    if !route_names.is_empty() && !route_names.iter().any(|n| n == &e.name) {
                         return false;
                     }
                 }
@@ -386,14 +381,16 @@ pub enum GuardrailError {
 }
 
 /// Create a guardrail instance from config.
-pub fn create_guardrail(
-    config: &GuardrailConfig,
-) -> Result<Arc<dyn Guardrail>, GuardrailError> {
+pub fn create_guardrail(config: &GuardrailConfig) -> Result<Arc<dyn Guardrail>, GuardrailError> {
     match config.provider.as_str() {
-        "prompt_guard" => Ok(Arc::new(builtin::PromptGuardGuardrail::from_config(config)?)),
+        "prompt_guard" => Ok(Arc::new(builtin::PromptGuardGuardrail::from_config(
+            config,
+        )?)),
         "pii_filter" => Ok(Arc::new(builtin::PiiFilterGuardrail::from_config(config)?)),
         "secret_scan" => Ok(Arc::new(builtin::SecretScanGuardrail::from_config(config)?)),
-        "keyword_block" => Ok(Arc::new(builtin::KeywordBlockGuardrail::from_config(config)?)),
+        "keyword_block" => Ok(Arc::new(builtin::KeywordBlockGuardrail::from_config(
+            config,
+        )?)),
         "regex_guard" => Ok(Arc::new(builtin::RegexGuardGuardrail::from_config(config)?)),
         "webhook" => Ok(Arc::new(webhook::WebhookGuardrail::from_config(config)?)),
         "lakera" => Ok(Arc::new(webhook::LakeraGuardrail::from_config(config)?)),
@@ -403,9 +400,7 @@ pub fn create_guardrail(
 }
 
 /// Build a GuardrailEngine from a list of guardrail configs.
-pub fn build_engine(
-    configs: &[GuardrailConfig],
-) -> Result<GuardrailEngine, GuardrailError> {
+pub fn build_engine(configs: &[GuardrailConfig]) -> Result<GuardrailEngine, GuardrailError> {
     let mut entries = Vec::with_capacity(configs.len());
 
     for config in configs {
@@ -547,7 +542,10 @@ mod tests {
     #[test]
     fn test_guardrail_mode_from_str() {
         assert_eq!(GuardrailMode::from_str("pre_call"), GuardrailMode::PreCall);
-        assert_eq!(GuardrailMode::from_str("post_call"), GuardrailMode::PostCall);
+        assert_eq!(
+            GuardrailMode::from_str("post_call"),
+            GuardrailMode::PostCall
+        );
         assert_eq!(GuardrailMode::from_str("both"), GuardrailMode::Both);
         assert_eq!(GuardrailMode::from_str("unknown"), GuardrailMode::PreCall);
     }
@@ -556,7 +554,10 @@ mod tests {
     fn test_guardrail_action_from_str() {
         assert_eq!(GuardrailAction::from_str("block"), GuardrailAction::Block);
         assert_eq!(GuardrailAction::from_str("redact"), GuardrailAction::Redact);
-        assert_eq!(GuardrailAction::from_str("log_only"), GuardrailAction::LogOnly);
+        assert_eq!(
+            GuardrailAction::from_str("log_only"),
+            GuardrailAction::LogOnly
+        );
         assert_eq!(GuardrailAction::from_str("unknown"), GuardrailAction::Block);
     }
 
@@ -566,7 +567,9 @@ mod tests {
         struct AlwaysPass;
         #[async_trait]
         impl Guardrail for AlwaysPass {
-            fn name(&self) -> &str { "always_pass" }
+            fn name(&self) -> &str {
+                "always_pass"
+            }
             async fn check_input(&self, _: &GuardrailInput<'_>) -> GuardrailVerdict {
                 GuardrailVerdict::Pass
             }
@@ -599,7 +602,9 @@ mod tests {
         struct AlwaysBlock;
         #[async_trait]
         impl Guardrail for AlwaysBlock {
-            fn name(&self) -> &str { "blocker" }
+            fn name(&self) -> &str {
+                "blocker"
+            }
             async fn check_input(&self, _: &GuardrailInput<'_>) -> GuardrailVerdict {
                 GuardrailVerdict::Block {
                     guardrail: "blocker".into(),
@@ -642,7 +647,9 @@ mod tests {
         struct PostOnlyGuard;
         #[async_trait]
         impl Guardrail for PostOnlyGuard {
-            fn name(&self) -> &str { "post_only" }
+            fn name(&self) -> &str {
+                "post_only"
+            }
             async fn check_input(&self, _: &GuardrailInput<'_>) -> GuardrailVerdict {
                 GuardrailVerdict::Block {
                     guardrail: "post_only".into(),
@@ -679,7 +686,9 @@ mod tests {
         struct BlockAll;
         #[async_trait]
         impl Guardrail for BlockAll {
-            fn name(&self) -> &str { "block_all" }
+            fn name(&self) -> &str {
+                "block_all"
+            }
             async fn check_input(&self, _: &GuardrailInput<'_>) -> GuardrailVerdict {
                 GuardrailVerdict::Block {
                     guardrail: "block_all".into(),

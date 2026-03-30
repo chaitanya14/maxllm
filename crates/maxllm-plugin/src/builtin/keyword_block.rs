@@ -167,16 +167,26 @@ mod tests {
     #[test]
     fn test_case_insensitive_match() {
         let plugin = make_plugin(vec!["DROP TABLE"], false);
-        assert!(plugin.contains_blocked_keyword("please drop table users").is_some());
-        assert!(plugin.contains_blocked_keyword("DROP TABLE users").is_some());
-        assert!(plugin.contains_blocked_keyword("no bad words here").is_none());
+        assert!(plugin
+            .contains_blocked_keyword("please drop table users")
+            .is_some());
+        assert!(plugin
+            .contains_blocked_keyword("DROP TABLE users")
+            .is_some());
+        assert!(plugin
+            .contains_blocked_keyword("no bad words here")
+            .is_none());
     }
 
     #[test]
     fn test_case_sensitive_match() {
         let plugin = make_plugin(vec!["DROP TABLE"], true);
-        assert!(plugin.contains_blocked_keyword("DROP TABLE users").is_some());
-        assert!(plugin.contains_blocked_keyword("drop table users").is_none());
+        assert!(plugin
+            .contains_blocked_keyword("DROP TABLE users")
+            .is_some());
+        assert!(plugin
+            .contains_blocked_keyword("drop table users")
+            .is_none());
     }
 
     #[test]

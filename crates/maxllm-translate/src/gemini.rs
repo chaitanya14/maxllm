@@ -101,9 +101,7 @@ impl ProviderTranslator for GeminiTranslator {
     fn upstream_headers(&self, _api_key: &str) -> Vec<(String, String)> {
         // Gemini uses query-param auth (?key=), handled via upstream_path.
         // No auth headers needed here.
-        vec![
-            ("Content-Type".to_string(), "application/json".to_string()),
-        ]
+        vec![("Content-Type".to_string(), "application/json".to_string())]
     }
 }
 
@@ -117,10 +115,7 @@ fn normalize_gemini_model(model: &str) -> String {
     model.to_string()
 }
 
-fn openai_to_gemini(
-    req: &OpenAIChatRequest,
-    model: &str,
-) -> Result<GeminiRequest, TranslateError> {
+fn openai_to_gemini(req: &OpenAIChatRequest, model: &str) -> Result<GeminiRequest, TranslateError> {
     let mut system_instruction: Option<GeminiContent> = None;
     let mut contents: Vec<GeminiContent> = Vec::new();
 
@@ -372,10 +367,7 @@ mod tests {
         assert_eq!(sys.parts[0].text.as_deref(), Some("You are helpful."));
         assert_eq!(parsed.contents.len(), 1);
         assert_eq!(parsed.contents[0].role, "user");
-        assert_eq!(
-            parsed.contents[0].parts[0].text.as_deref(),
-            Some("Hello!")
-        );
+        assert_eq!(parsed.contents[0].parts[0].text.as_deref(), Some("Hello!"));
 
         let config = parsed.generation_config.unwrap();
         assert_eq!(config.max_output_tokens, Some(1024));

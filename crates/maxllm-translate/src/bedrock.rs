@@ -138,9 +138,7 @@ fn normalize_bedrock_model(model: &str) -> String {
 ///
 /// Bedrock Anthropic format is similar to direct Anthropic, but without the
 /// `model` field (it is in the URL path).
-fn openai_to_bedrock_anthropic(
-    req: &OpenAIChatRequest,
-) -> Result<Value, TranslateError> {
+fn openai_to_bedrock_anthropic(req: &OpenAIChatRequest) -> Result<Value, TranslateError> {
     let mut system: Option<Value> = None;
     let mut messages: Vec<Value> = Vec::new();
 
@@ -396,7 +394,10 @@ mod tests {
 
         let t = BedrockTranslator::new();
         t.translate_request(&body, None).unwrap();
-        assert_eq!(t.last_model_id(), "anthropic.claude-haiku-4-5-20251001-v1:0");
+        assert_eq!(
+            t.last_model_id(),
+            "anthropic.claude-haiku-4-5-20251001-v1:0"
+        );
     }
 
     #[test]
@@ -405,9 +406,7 @@ mod tests {
         let headers = t.upstream_headers("ignored");
         // Should NOT have Authorization or api-key
         assert!(!headers.iter().any(|(k, _)| k == "Authorization"));
-        assert!(headers
-            .iter()
-            .any(|(k, _)| k == "anthropic-version"));
+        assert!(headers.iter().any(|(k, _)| k == "anthropic-version"));
     }
 
     #[test]

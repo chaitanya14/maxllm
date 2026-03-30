@@ -116,14 +116,20 @@ impl AdminStore for InMemoryStore {
         if keys.contains_key(&key.id) {
             return Err(StoreError::Duplicate(format!("key {}", key.id)));
         }
-        let mut idx = self.hash_index.write().map_err(|_| StoreError::LockPoisoned)?;
+        let mut idx = self
+            .hash_index
+            .write()
+            .map_err(|_| StoreError::LockPoisoned)?;
         idx.insert(key.key_hash.clone(), key.id.clone());
         keys.insert(key.id.clone(), key);
         Ok(())
     }
 
     fn get_key_by_hash(&self, key_hash: &str) -> Result<Option<VirtualKey>, StoreError> {
-        let idx = self.hash_index.read().map_err(|_| StoreError::LockPoisoned)?;
+        let idx = self
+            .hash_index
+            .read()
+            .map_err(|_| StoreError::LockPoisoned)?;
         let id = match idx.get(key_hash) {
             Some(id) => id.clone(),
             None => return Ok(None),
@@ -158,7 +164,10 @@ impl AdminStore for InMemoryStore {
         let mut keys = self.keys.write().map_err(|_| StoreError::LockPoisoned)?;
         let removed = keys.remove(id);
         if let Some(ref k) = removed {
-            let mut idx = self.hash_index.write().map_err(|_| StoreError::LockPoisoned)?;
+            let mut idx = self
+                .hash_index
+                .write()
+                .map_err(|_| StoreError::LockPoisoned)?;
             idx.remove(&k.key_hash);
         }
         Ok(removed.is_some())
@@ -204,7 +213,10 @@ impl AdminStore for InMemoryStore {
     // -- Spend --------------------------------------------------------------
 
     fn record_spend(&self, record: SpendRecord) -> Result<(), StoreError> {
-        let mut logs = self.spend_logs.write().map_err(|_| StoreError::LockPoisoned)?;
+        let mut logs = self
+            .spend_logs
+            .write()
+            .map_err(|_| StoreError::LockPoisoned)?;
         logs.push(record);
         Ok(())
     }
@@ -214,17 +226,27 @@ impl AdminStore for InMemoryStore {
         key_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SpendRecord>, StoreError> {
-        let logs = self.spend_logs.read().map_err(|_| StoreError::LockPoisoned)?;
+        let logs = self
+            .spend_logs
+            .read()
+            .map_err(|_| StoreError::LockPoisoned)?;
         let iter = logs.iter().rev(); // newest first
         let filtered: Vec<SpendRecord> = match key_id {
-            Some(kid) => iter.filter(|r| r.key_id == kid).take(limit).cloned().collect(),
+            Some(kid) => iter
+                .filter(|r| r.key_id == kid)
+                .take(limit)
+                .cloned()
+                .collect(),
             None => iter.take(limit).cloned().collect(),
         };
         Ok(filtered)
     }
 
     fn get_spend_summary(&self, key_id: Option<&str>) -> Result<SpendReport, StoreError> {
-        let logs = self.spend_logs.read().map_err(|_| StoreError::LockPoisoned)?;
+        let logs = self
+            .spend_logs
+            .read()
+            .map_err(|_| StoreError::LockPoisoned)?;
 
         let records: Vec<&SpendRecord> = match key_id {
             Some(kid) => logs.iter().filter(|r| r.key_id == kid).collect(),
@@ -267,7 +289,11 @@ impl AdminStore for InMemoryStore {
 
         let collect = |m: HashMap<String, SpendByGroup>| -> Vec<SpendByGroup> {
             let mut v: Vec<SpendByGroup> = m.into_values().collect();
-            v.sort_by(|a, b| b.spend_usd.partial_cmp(&a.spend_usd).unwrap_or(std::cmp::Ordering::Equal));
+            v.sort_by(|a, b| {
+                b.spend_usd
+                    .partial_cmp(&a.spend_usd)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             v
         };
 
@@ -285,7 +311,10 @@ impl AdminStore for InMemoryStore {
     // -- Request logs -------------------------------------------------------
 
     fn record_request_log(&self, log: RequestLog) -> Result<(), StoreError> {
-        let mut logs = self.request_logs.write().map_err(|_| StoreError::LockPoisoned)?;
+        let mut logs = self
+            .request_logs
+            .write()
+            .map_err(|_| StoreError::LockPoisoned)?;
         logs.push(log);
         Ok(())
     }
@@ -296,12 +325,14 @@ impl AdminStore for InMemoryStore {
         provider: Option<&str>,
         model: Option<&str>,
     ) -> Result<Vec<RequestLog>, StoreError> {
-        let logs = self.request_logs.read().map_err(|_| StoreError::LockPoisoned)?;
+        let logs = self
+            .request_logs
+            .read()
+            .map_err(|_| StoreError::LockPoisoned)?;
         let iter = logs.iter().rev(); // newest first
         let filtered: Vec<RequestLog> = iter
             .filter(|r| {
-                provider.map_or(true, |p| r.provider == p)
-                    && model.map_or(true, |m| r.model == m)
+                provider.map_or(true, |p| r.provider == p) && model.map_or(true, |m| r.model == m)
             })
             .take(limit)
             .cloned()

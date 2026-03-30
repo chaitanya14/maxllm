@@ -120,10 +120,8 @@ impl PromptGuardPlugin {
                         .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("custom");
-                    let rule_regex = table
-                        .get("regex")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
+                    let rule_regex =
+                        table.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
                             PluginError::Config(
                                 "custom_rules entries require a 'regex' field".into(),
                             )
@@ -234,8 +232,7 @@ impl Plugin for PromptGuardPlugin {
         if let Some(query) = session.req_header().uri.query() {
             let matches = self.detect(query);
             if !matches.is_empty() {
-                let rule_names: Vec<&str> =
-                    matches.iter().map(|m| m.rule_name.as_str()).collect();
+                let rule_names: Vec<&str> = matches.iter().map(|m| m.rule_name.as_str()).collect();
                 tracing::warn!(
                     plugin = self.name.as_str(),
                     rules = ?rule_names,
@@ -382,8 +379,7 @@ mod tests {
     #[test]
     fn test_no_match_normal_conversation() {
         let plugin = default_plugin();
-        let matches =
-            plugin.detect("Can you help me write a Python function to sort a list?");
+        let matches = plugin.detect("Can you help me write a Python function to sort a list?");
         assert!(matches.is_empty());
     }
 
@@ -419,10 +415,7 @@ mod tests {
         config.insert("category".into(), "prompt_guard".into());
         config.insert(
             "rules".into(),
-            toml::Value::Array(vec![
-                "system_override".into(),
-                "developer_mode".into(),
-            ]),
+            toml::Value::Array(vec!["system_override".into(), "developer_mode".into()]),
         );
 
         let plugin = PromptGuardPlugin::from_config("pg", &config).unwrap();

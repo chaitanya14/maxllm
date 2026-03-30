@@ -161,10 +161,8 @@ impl PiiFilterPlugin {
                         .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("custom");
-                    let pat_regex = table
-                        .get("regex")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
+                    let pat_regex =
+                        table.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
                             PluginError::Config(
                                 "custom_patterns entries require a 'regex' field".into(),
                             )
@@ -206,20 +204,14 @@ impl PiiFilterPlugin {
     /// Return a built-in PII pattern by name, or None if unknown.
     fn builtin_pattern(name: &str) -> Option<PiiPattern> {
         let (regex_str, replacement) = match name {
-            "email" => (
-                r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-                "[EMAIL]",
-            ),
+            "email" => (r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[EMAIL]"),
             "ssn" => (r"\b\d{3}-\d{2}-\d{4}\b", "[SSN]"),
             "credit_card" => (r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "[CREDIT_CARD]"),
             "phone" => (
                 r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
                 "[PHONE]",
             ),
-            "ip_address" => (
-                r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b",
-                "[IP_ADDRESS]",
-            ),
+            "ip_address" => (r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "[IP_ADDRESS]"),
             _ => return None,
         };
 
@@ -354,10 +346,7 @@ mod tests {
         config.insert("category".into(), "pii_filter".into());
         config.insert("action".into(), "redact".into());
         config.insert("mode".into(), "both".into());
-        config.insert(
-            "patterns".into(),
-            toml::Value::Array(vec!["email".into()]),
-        );
+        config.insert("patterns".into(), toml::Value::Array(vec!["email".into()]));
 
         let plugin = PiiFilterPlugin::from_config("pii", &config).unwrap();
         assert_eq!(plugin.action, PiiAction::Redact);
@@ -433,10 +422,7 @@ mod tests {
         let mut config = toml::Table::new();
         config.insert("category".into(), "pii_filter".into());
         config.insert("action".into(), "destroy".into());
-        config.insert(
-            "patterns".into(),
-            toml::Value::Array(vec!["email".into()]),
-        );
+        config.insert("patterns".into(), toml::Value::Array(vec!["email".into()]));
 
         assert!(PiiFilterPlugin::from_config("pii", &config).is_err());
     }
@@ -454,10 +440,7 @@ mod tests {
     fn test_custom_pattern() {
         let mut config = toml::Table::new();
         config.insert("category".into(), "pii_filter".into());
-        config.insert(
-            "patterns".into(),
-            toml::Value::Array(vec!["email".into()]),
-        );
+        config.insert("patterns".into(), toml::Value::Array(vec!["email".into()]));
 
         let mut custom = toml::Table::new();
         custom.insert("name".into(), "aws_key".into());

@@ -54,7 +54,10 @@ pub fn providers(config_path: PathBuf) -> i32 {
         return 0;
     }
 
-    println!("{:<20} {:<15} {:<40} {}", "NAME", "KIND", "BASE URL", "DEFAULT MODEL");
+    println!(
+        "{:<20} {:<15} {:<40} {}",
+        "NAME", "KIND", "BASE URL", "DEFAULT MODEL"
+    );
     println!("{}", "-".repeat(90));
 
     let mut providers: Vec<_> = config.providers.iter().collect();

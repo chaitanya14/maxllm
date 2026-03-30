@@ -21,7 +21,11 @@ use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "maxllm", version, about = "MaxLLM - AI Gateway built on Pingora")]
+#[command(
+    name = "maxllm",
+    version,
+    about = "MaxLLM - AI Gateway built on Pingora"
+)]
 struct Args {
     /// Path to the configuration file
     #[arg(short, long, default_value = "maxllm.toml")]
@@ -68,7 +72,10 @@ fn main() {
     // Start config file watcher (before gateway takes ownership)
     if !args.no_reload {
         let hot = Arc::clone(&gateway.hot);
-        let config_path = args.config.canonicalize().unwrap_or_else(|_| args.config.clone());
+        let config_path = args
+            .config
+            .canonicalize()
+            .unwrap_or_else(|_| args.config.clone());
         start_config_watcher(config_path, hot);
     }
 
@@ -104,10 +111,7 @@ fn main() {
 
 /// Spawn a background thread that watches the config file for changes
 /// and hot-reloads the gateway state atomically.
-fn start_config_watcher(
-    config_path: PathBuf,
-    hot: Arc<arc_swap::ArcSwap<gateway::HotState>>,
-) {
+fn start_config_watcher(config_path: PathBuf, hot: Arc<arc_swap::ArcSwap<gateway::HotState>>) {
     let watch_path = config_path.clone();
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -141,13 +145,11 @@ fn start_config_watcher(
             };
 
             // Only react to modify/create events on our config file
-            let is_relevant = matches!(
-                event.kind,
-                EventKind::Modify(_) | EventKind::Create(_)
-            ) && event.paths.iter().any(|p| {
-                p.canonicalize().ok().as_ref() == Some(&config_path)
-                    || p.file_name() == config_path.file_name()
-            });
+            let is_relevant = matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                && event.paths.iter().any(|p| {
+                    p.canonicalize().ok().as_ref() == Some(&config_path)
+                        || p.file_name() == config_path.file_name()
+                });
 
             if !is_relevant {
                 continue;

@@ -181,8 +181,7 @@ impl Plugin for CachePlugin {
                     headers: cached.headers.clone(),
                     body: cached.body.clone(),
                 };
-                resp.headers
-                    .push(("X-MaxLLM-Cache".into(), "HIT".into()));
+                resp.headers.push(("X-MaxLLM-Cache".into(), "HIT".into()));
                 return Ok(RequestAction::Respond(resp));
             }
         }
@@ -268,10 +267,7 @@ impl Plugin for CachePlugin {
                 }
             };
 
-            let body_hex = ctx
-                .extensions
-                .remove(EXT_CACHE_BODY)
-                .unwrap_or_default();
+            let body_hex = ctx.extensions.remove(EXT_CACHE_BODY).unwrap_or_default();
             let body_bytes = hex::decode(&body_hex).unwrap_or_default();
 
             let headers: Vec<(String, String)> = ctx

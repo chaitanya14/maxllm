@@ -63,9 +63,7 @@ impl HttpResponse {
         }
         resp.insert_header("Content-Length", &content_len)?;
         session.set_keepalive(None);
-        session
-            .write_response_header(Box::new(resp), false)
-            .await?;
+        session.write_response_header(Box::new(resp), false).await?;
         session
             .write_response_body(Some(Bytes::from(self.body.clone())), true)
             .await?;

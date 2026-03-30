@@ -107,10 +107,7 @@ pub fn generate_key(
 ///
 /// Returns `Ok(Some(key))` if valid, `Ok(None)` if the key does not exist,
 /// or an error describing *why* the key is invalid.
-pub fn validate_key(
-    store: &dyn AdminStore,
-    raw_key: &str,
-) -> Result<Option<VirtualKey>, KeyError> {
+pub fn validate_key(store: &dyn AdminStore, raw_key: &str) -> Result<Option<VirtualKey>, KeyError> {
     let key_hash = hash_key(raw_key);
     let key = match store.get_key_by_hash(&key_hash)? {
         Some(k) => k,
@@ -162,10 +159,7 @@ pub fn list_keys(
 }
 
 /// Get a single key by ID.
-pub fn get_key_info(
-    store: &dyn AdminStore,
-    key_id: &str,
-) -> Result<Option<VirtualKey>, KeyError> {
+pub fn get_key_info(store: &dyn AdminStore, key_id: &str) -> Result<Option<VirtualKey>, KeyError> {
     Ok(store.get_key_by_id(key_id)?)
 }
 

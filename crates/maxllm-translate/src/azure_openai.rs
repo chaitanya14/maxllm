@@ -33,9 +33,8 @@ impl AzureOpenAITranslator {
     pub fn new(deployment: impl Into<String>, api_version: impl Into<String>) -> Self {
         let deployment = deployment.into();
         let api_version = api_version.into();
-        let path = format!(
-            "/openai/deployments/{deployment}/chat/completions?api-version={api_version}"
-        );
+        let path =
+            format!("/openai/deployments/{deployment}/chat/completions?api-version={api_version}");
         Self {
             deployment,
             api_version,

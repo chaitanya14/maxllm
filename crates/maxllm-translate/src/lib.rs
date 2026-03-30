@@ -6,17 +6,17 @@
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 
-pub mod formats;
-pub mod openai;
 pub mod anthropic;
 pub mod anthropic_stream;
-pub mod gemini;
-pub mod gemini_stream;
-pub mod cohere;
-pub mod cohere_stream;
-pub mod openai_compat;
 pub mod azure_openai;
 pub mod bedrock;
+pub mod cohere;
+pub mod cohere_stream;
+pub mod formats;
+pub mod gemini;
+pub mod gemini_stream;
+pub mod openai;
+pub mod openai_compat;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TranslateError {

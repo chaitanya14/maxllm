@@ -64,10 +64,7 @@ impl GeminiToOpenAIStream {
                     let mut delta = serde_json::Map::new();
                     if !self.sent_role {
                         self.sent_role = true;
-                        delta.insert(
-                            "role".to_string(),
-                            Value::String("assistant".to_string()),
-                        );
+                        delta.insert("role".to_string(), Value::String("assistant".to_string()));
                     }
                     delta.insert("content".to_string(), Value::String(text.to_string()));
 

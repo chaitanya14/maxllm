@@ -98,7 +98,8 @@ mod tests {
 
     #[test]
     fn test_streaming_detection() {
-        let body = br#"{"model":"gpt-4o","messages":[{"role":"user","content":"Hi"}],"stream":true}"#;
+        let body =
+            br#"{"model":"gpt-4o","messages":[{"role":"user","content":"Hi"}],"stream":true}"#;
         let t = OpenAITranslator;
         let result = t.translate_request(body, None).unwrap();
         assert!(result.is_streaming);
@@ -108,6 +109,9 @@ mod tests {
     fn test_headers() {
         let t = OpenAITranslator;
         let headers = t.upstream_headers("sk-test");
-        assert_eq!(headers[0], ("Authorization".to_string(), "Bearer sk-test".to_string()));
+        assert_eq!(
+            headers[0],
+            ("Authorization".to_string(), "Bearer sk-test".to_string())
+        );
     }
 }

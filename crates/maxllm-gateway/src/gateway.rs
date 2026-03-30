@@ -31,16 +31,28 @@ use tracing::{info, warn};
 fn well_known_models(kind: ProviderKind) -> &'static [&'static str] {
     match kind {
         ProviderKind::OpenAI => &[
-            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
-            "o1", "o1-mini", "o1-preview", "o3-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o3-mini",
         ],
         ProviderKind::Anthropic => &[
-            "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022", "claude-3-opus-20240229",
+            "claude-sonnet-4-20250514",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-opus-20240229",
         ],
         ProviderKind::Gemini => &[
-            "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
-            "gemini-1.5-pro", "gemini-1.5-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
         ],
         ProviderKind::AzureOpenai => &["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
         ProviderKind::Bedrock => &[
@@ -48,12 +60,18 @@ fn well_known_models(kind: ProviderKind) -> &'static [&'static str] {
             "anthropic.claude-3-haiku-20240307-v1:0",
         ],
         ProviderKind::Groq => &[
-            "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768",
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
         ],
         ProviderKind::Together => &["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
         ProviderKind::Fireworks => &["accounts/fireworks/models/llama-v3p3-70b-instruct"],
         ProviderKind::DeepInfra => &["meta-llama/Llama-3.3-70B-Instruct"],
-        ProviderKind::Mistral => &["mistral-large-latest", "mistral-small-latest", "open-mistral-nemo"],
+        ProviderKind::Mistral => &[
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "open-mistral-nemo",
+        ],
         ProviderKind::XAI => &["grok-2", "grok-2-mini"],
         ProviderKind::DeepSeek => &["deepseek-chat", "deepseek-reasoner"],
         ProviderKind::Ollama => &["llama3.2", "mistral", "codellama"],
@@ -129,25 +147,18 @@ pub fn build_hot_state(config: &Config) -> Result<HotState, Box<dyn std::error::
 
     for (name, conf) in &config.providers {
         let translator: Box<dyn ProviderTranslator> = match conf.kind {
-            ProviderKind::OpenAI => {
-                Box::new(maxllm_translate::openai::OpenAITranslator)
-            }
-            ProviderKind::Anthropic => {
-                Box::new(maxllm_translate::anthropic::AnthropicTranslator)
-            }
-            ProviderKind::Gemini => {
-                Box::new(maxllm_translate::gemini::GeminiTranslator::new())
-            }
+            ProviderKind::OpenAI => Box::new(maxllm_translate::openai::OpenAITranslator),
+            ProviderKind::Anthropic => Box::new(maxllm_translate::anthropic::AnthropicTranslator),
+            ProviderKind::Gemini => Box::new(maxllm_translate::gemini::GeminiTranslator::new()),
             ProviderKind::AzureOpenai => {
                 let deployment = conf.deployment.as_deref().unwrap_or("gpt-4o");
                 let api_version = conf.api_version.as_deref().unwrap_or("2024-02-01");
                 Box::new(maxllm_translate::azure_openai::AzureOpenAITranslator::new(
-                    deployment, api_version,
+                    deployment,
+                    api_version,
                 ))
             }
-            ProviderKind::Bedrock => {
-                Box::new(maxllm_translate::bedrock::BedrockTranslator::new())
-            }
+            ProviderKind::Bedrock => Box::new(maxllm_translate::bedrock::BedrockTranslator::new()),
             ProviderKind::Groq => {
                 Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::groq())
             }
@@ -172,16 +183,19 @@ pub fn build_hot_state(config: &Config) -> Result<HotState, Box<dyn std::error::
             ProviderKind::Ollama => {
                 Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::ollama())
             }
-            ProviderKind::Cohere => {
-                Box::new(maxllm_translate::cohere::CohereTranslator)
-            }
+            ProviderKind::Cohere => Box::new(maxllm_translate::cohere::CohereTranslator),
             ProviderKind::OpenaiCompat => {
-                let path = conf.upstream_path.as_deref().unwrap_or("/v1/chat/completions");
-                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::new(
-                    name.clone(),
-                    path.to_string(),
-                    maxllm_translate::openai_compat::AuthStyle::Bearer,
-                ))
+                let path = conf
+                    .upstream_path
+                    .as_deref()
+                    .unwrap_or("/v1/chat/completions");
+                Box::new(
+                    maxllm_translate::openai_compat::OpenAICompatTranslator::new(
+                        name.clone(),
+                        path.to_string(),
+                        maxllm_translate::openai_compat::AuthStyle::Bearer,
+                    ),
+                )
             }
         };
 
@@ -428,9 +442,7 @@ impl AiGateway {
 
     /// Find matching route by path prefix.
     fn match_route(hot: &HotState, path: &str) -> Option<usize> {
-        hot.routes
-            .iter()
-            .position(|r| path.starts_with(&r.path))
+        hot.routes.iter().position(|r| path.starts_with(&r.path))
     }
 
     /// Select provider using the route's configured strategy.
@@ -506,9 +518,7 @@ impl AiGateway {
         resp.insert_header("Content-Length", &content_len)?;
 
         session.set_keepalive(None);
-        session
-            .write_response_header(Box::new(resp), false)
-            .await?;
+        session.write_response_header(Box::new(resp), false).await?;
         session
             .write_response_body(Some(Bytes::from(body_bytes)), true)
             .await?;
@@ -538,9 +548,7 @@ impl ProxyHttp for AiGateway {
             let mut resp = ResponseHeader::build(200, Some(2))?;
             resp.insert_header("Content-Type", "application/json")?;
             resp.insert_header("Content-Length", "15")?;
-            session
-                .write_response_header(Box::new(resp), false)
-                .await?;
+            session.write_response_header(Box::new(resp), false).await?;
             session
                 .write_response_body(Some(Bytes::from_static(HEALTH_BODY)), true)
                 .await?;
@@ -558,12 +566,8 @@ impl ProxyHttp for AiGateway {
             let mut resp = ResponseHeader::build(200, Some(2))?;
             resp.insert_header("Content-Type", "application/json")?;
             resp.insert_header("Content-Length", &content_len)?;
-            session
-                .write_response_header(Box::new(resp), false)
-                .await?;
-            session
-                .write_response_body(Some(body_bytes), true)
-                .await?;
+            session.write_response_header(Box::new(resp), false).await?;
+            session.write_response_body(Some(body_bytes), true).await?;
             ctx.skip_logging = true;
             return Ok(true);
         }
@@ -577,9 +581,7 @@ impl ProxyHttp for AiGateway {
             let mut resp = ResponseHeader::build(200, Some(2))?;
             resp.insert_header("Content-Type", "text/plain; version=0.0.4")?;
             resp.insert_header("Content-Length", &content_len)?;
-            session
-                .write_response_header(Box::new(resp), false)
-                .await?;
+            session.write_response_header(Box::new(resp), false).await?;
             session
                 .write_response_body(Some(Bytes::from(body)), true)
                 .await?;
@@ -619,7 +621,11 @@ impl ProxyHttp for AiGateway {
         }
 
         // Run global plugin chain (auth, request_id, ip_restriction, etc.)
-        if let Some(resp) = hot.global_chain.run_request(session, &mut ctx.plugin_ctx).await? {
+        if let Some(resp) = hot
+            .global_chain
+            .run_request(session, &mut ctx.plugin_ctx)
+            .await?
+        {
             METRICS.active_requests.dec();
             resp.send(session).await?;
             return Ok(true);
@@ -742,7 +748,9 @@ impl ProxyHttp for AiGateway {
         let path = match ctx.endpoint_type {
             EndpointType::Passthrough => {
                 // Use the suffix path captured from the client request
-                ctx.passthrough_path.clone().unwrap_or_else(|| "/".to_string())
+                ctx.passthrough_path
+                    .clone()
+                    .unwrap_or_else(|| "/".to_string())
             }
             EndpointType::Native => {
                 // Use the original client request path (already in provider format).
@@ -757,7 +765,10 @@ impl ProxyHttp for AiGateway {
             EndpointType::Embeddings => {
                 // Embeddings endpoint: use the embeddings path for each provider
                 if provider.kind == ProviderKind::Gemini {
-                    let model = provider.default_model.as_deref().unwrap_or("text-embedding-004");
+                    let model = provider
+                        .default_model
+                        .as_deref()
+                        .unwrap_or("text-embedding-004");
                     format!(
                         "/v1beta/models/{}:embedContent?key={}",
                         model, provider.api_key
@@ -772,7 +783,10 @@ impl ProxyHttp for AiGateway {
             _ => {
                 // Normal (chat completions): use translator's upstream path
                 if provider.kind == ProviderKind::Gemini {
-                    let model = provider.default_model.as_deref().unwrap_or("gemini-2.5-flash");
+                    let model = provider
+                        .default_model
+                        .as_deref()
+                        .unwrap_or("gemini-2.5-flash");
                     // Always use generateContent (non-streaming endpoint).
                     // If client requested streaming, the gateway will convert
                     // the JSON response to SSE in upstream_response_body_filter.
@@ -868,7 +882,9 @@ impl ProxyHttp for AiGateway {
             if end_of_stream && !ctx.body_translated {
                 ctx.body_translated = true;
                 let hot = self.hot.load();
-                if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf) {
+                if let Ok(parsed) =
+                    serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf)
+                {
                     if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
                         let resolved = Self::resolve_model_alias(&hot, model);
                         ctx.model = resolved.clone();
@@ -881,13 +897,13 @@ impl ProxyHttp for AiGateway {
                             let provider = hot.providers.get(&ctx.provider_name);
                             if let Some(p) = provider {
                                 match ctx.stream_translator.lock() {
-                                Ok(mut guard) => {
-                                    *guard = Some(p.translator.streaming_translator());
+                                    Ok(mut guard) => {
+                                        *guard = Some(p.translator.streaming_translator());
+                                    }
+                                    Err(e) => {
+                                        warn!("stream_translator mutex poisoned: {e}");
+                                    }
                                 }
-                                Err(e) => {
-                                    warn!("stream_translator mutex poisoned: {e}");
-                                }
-                            }
                             }
                         }
                     }
@@ -906,7 +922,9 @@ impl ProxyHttp for AiGateway {
             if end_of_stream && !ctx.body_translated {
                 ctx.body_translated = true;
                 let hot = self.hot.load();
-                if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf) {
+                if let Ok(parsed) =
+                    serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf)
+                {
                     if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
                         let resolved = Self::resolve_model_alias(&hot, model);
                         ctx.model = resolved.clone();
@@ -1026,9 +1044,7 @@ impl ProxyHttp for AiGateway {
                     }
 
                     // Extract client-requested guardrails from request body
-                    if let Some(guardrails) =
-                        parsed.get("guardrails").and_then(|g| g.as_array())
-                    {
+                    if let Some(guardrails) = parsed.get("guardrails").and_then(|g| g.as_array()) {
                         ctx.requested_guardrails = Some(
                             guardrails
                                 .iter()
@@ -1068,9 +1084,7 @@ impl ProxyHttp for AiGateway {
                                     ref reason,
                                 } => {
                                     return self
-                                        .send_guardrail_block(
-                                            _session, ctx, guardrail, reason,
-                                        )
+                                        .send_guardrail_block(_session, ctx, guardrail, reason)
                                         .await;
                                 }
                                 GuardrailVerdict::Modify {
@@ -1087,10 +1101,9 @@ impl ProxyHttp for AiGateway {
                                                 if msg.get("role").and_then(|r| r.as_str())
                                                     == Some("user")
                                                 {
-                                                    msg["content"] =
-                                                        serde_json::Value::String(
-                                                            new_content.clone(),
-                                                        );
+                                                    msg["content"] = serde_json::Value::String(
+                                                        new_content.clone(),
+                                                    );
                                                     break;
                                                 }
                                             }
@@ -1109,14 +1122,10 @@ impl ProxyHttp for AiGateway {
                                     if let Some(mut parsed) = parsed.clone() {
                                         if let Some(obj) = parsed.as_object_mut() {
                                             if obj.remove("guardrails").is_some() {
-                                                ctx.request_body_buf =
-                                                    serde_json::to_vec(&parsed).unwrap_or_else(
-                                                        |_| {
-                                                            std::mem::take(
-                                                                &mut ctx.request_body_buf,
-                                                            )
-                                                        },
-                                                    );
+                                                ctx.request_body_buf = serde_json::to_vec(&parsed)
+                                                    .unwrap_or_else(|_| {
+                                                        std::mem::take(&mut ctx.request_body_buf)
+                                                    });
                                             }
                                         }
                                     }
@@ -1130,9 +1139,7 @@ impl ProxyHttp for AiGateway {
                         if let Some(obj) = parsed.as_object_mut() {
                             if obj.remove("guardrails").is_some() {
                                 ctx.request_body_buf = serde_json::to_vec(&parsed)
-                                    .unwrap_or_else(|_| {
-                                        std::mem::take(&mut ctx.request_body_buf)
-                                    });
+                                    .unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
                             }
                         }
                     }
@@ -1159,8 +1166,7 @@ impl ProxyHttp for AiGateway {
                     }
                     Err(e) => {
                         warn!(error = %e, "Failed to translate request body");
-                        *body =
-                            Some(Bytes::from(std::mem::take(&mut ctx.request_body_buf)));
+                        *body = Some(Bytes::from(std::mem::take(&mut ctx.request_body_buf)));
                     }
                 }
             }
@@ -1207,8 +1213,8 @@ impl ProxyHttp for AiGateway {
 
         // For Gemini streaming: we got a JSON response from generateContent
         // but client wants SSE. Set the right content type.
-        let is_gemini_streaming = ctx.is_streaming
-            && provider.map_or(false, |p| p.kind == ProviderKind::Gemini);
+        let is_gemini_streaming =
+            ctx.is_streaming && provider.map_or(false, |p| p.kind == ProviderKind::Gemini);
         if is_gemini_streaming {
             upstream_response.insert_header("Content-Type", "text/event-stream")?;
             let _ = upstream_response.remove_header("Content-Length");
@@ -1276,11 +1282,19 @@ impl ProxyHttp for AiGateway {
                 }
             }
             // Still run plugin chains (logging, webhooks, etc.)
-            hot.global_chain
-                .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            hot.global_chain.run_response_body(
+                session,
+                body,
+                end_of_stream,
+                &mut ctx.plugin_ctx,
+            )?;
             if let Some(idx) = ctx.route_index {
-                hot.route_chains[idx]
-                    .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+                hot.route_chains[idx].run_response_body(
+                    session,
+                    body,
+                    end_of_stream,
+                    &mut ctx.plugin_ctx,
+                )?;
             }
             return Ok(None);
         }
@@ -1344,9 +1358,7 @@ impl ProxyHttp for AiGateway {
                                         });
                                     ctx.applied_guardrails.extend(post_applied);
 
-                                    if let GuardrailVerdict::Block { guardrail, reason } =
-                                        verdict
-                                    {
+                                    if let GuardrailVerdict::Block { guardrail, reason } = verdict {
                                         let error_body = serde_json::json!({
                                             "error": {
                                                 "message": reason,
@@ -1355,9 +1367,8 @@ impl ProxyHttp for AiGateway {
                                                 "code": 400
                                             }
                                         });
-                                        *body = Some(Bytes::from(
-                                            error_body.to_string().into_bytes(),
-                                        ));
+                                        *body =
+                                            Some(Bytes::from(error_body.to_string().into_bytes()));
                                         // Skip forwarding the original body
                                         hot.global_chain.run_response_body(
                                             session,
@@ -1386,11 +1397,19 @@ impl ProxyHttp for AiGateway {
             }
 
             // Run plugin chains
-            hot.global_chain
-                .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            hot.global_chain.run_response_body(
+                session,
+                body,
+                end_of_stream,
+                &mut ctx.plugin_ctx,
+            )?;
             if let Some(idx) = ctx.route_index {
-                hot.route_chains[idx]
-                    .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+                hot.route_chains[idx].run_response_body(
+                    session,
+                    body,
+                    end_of_stream,
+                    &mut ctx.plugin_ctx,
+                )?;
             }
             return Ok(None);
         }
@@ -1421,7 +1440,8 @@ impl ProxyHttp for AiGateway {
                             }
                             Err(e) => {
                                 warn!(error = %e, "Failed to translate Gemini streaming response");
-                                *body = Some(Bytes::from(std::mem::take(&mut ctx.response_body_buf)));
+                                *body =
+                                    Some(Bytes::from(std::mem::take(&mut ctx.response_body_buf)));
                             }
                         }
                     }
@@ -1466,11 +1486,17 @@ impl ProxyHttp for AiGateway {
 
                             // Run plugin chains and return early
                             hot.global_chain.run_response_body(
-                                session, body, end_of_stream, &mut ctx.plugin_ctx,
+                                session,
+                                body,
+                                end_of_stream,
+                                &mut ctx.plugin_ctx,
                             )?;
                             if let Some(idx) = ctx.route_index {
                                 hot.route_chains[idx].run_response_body(
-                                    session, body, end_of_stream, &mut ctx.plugin_ctx,
+                                    session,
+                                    body,
+                                    end_of_stream,
+                                    &mut ctx.plugin_ctx,
                                 )?;
                             }
                             return Ok(None);
@@ -1509,10 +1535,7 @@ impl ProxyHttp for AiGateway {
                                             ctx.applied_guardrails.extend(post_applied);
 
                                             match verdict {
-                                                GuardrailVerdict::Block {
-                                                    guardrail,
-                                                    reason,
-                                                } => {
+                                                GuardrailVerdict::Block { guardrail, reason } => {
                                                     let error_body = serde_json::json!({
                                                         "error": {
                                                             "message": reason,
@@ -1530,9 +1553,7 @@ impl ProxyHttp for AiGateway {
                                                         .get_mut("choices")
                                                         .and_then(|c| c.as_array_mut())
                                                     {
-                                                        if let Some(choice) =
-                                                            choices.first_mut()
-                                                        {
+                                                        if let Some(choice) = choices.first_mut() {
                                                             if let Some(msg) =
                                                                 choice.get_mut("message")
                                                             {
@@ -1543,9 +1564,8 @@ impl ProxyHttp for AiGateway {
                                                             }
                                                         }
                                                     }
-                                                    translated =
-                                                        serde_json::to_vec(&resp_json)
-                                                            .unwrap_or(translated);
+                                                    translated = serde_json::to_vec(&resp_json)
+                                                        .unwrap_or(translated);
                                                 }
                                                 _ => {}
                                             }
@@ -1558,9 +1578,7 @@ impl ProxyHttp for AiGateway {
                         }
                         Err(e) => {
                             warn!(error = %e, "Failed to translate response body");
-                            *body = Some(Bytes::from(std::mem::take(
-                                &mut ctx.response_body_buf,
-                            )));
+                            *body = Some(Bytes::from(std::mem::take(&mut ctx.response_body_buf)));
                         }
                     }
                 } else {
@@ -1573,8 +1591,12 @@ impl ProxyHttp for AiGateway {
         hot.global_chain
             .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
         if let Some(idx) = ctx.route_index {
-            hot.route_chains[idx]
-                .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
+            hot.route_chains[idx].run_response_body(
+                session,
+                body,
+                end_of_stream,
+                &mut ctx.plugin_ctx,
+            )?;
         }
 
         Ok(None)
@@ -1695,7 +1717,9 @@ impl AiGateway {
                 resp.insert_header("Content-Type", "application/json")?;
                 resp.insert_header("Content-Length", &content_len)?;
                 session.write_response_header(Box::new(resp), false).await?;
-                session.write_response_body(Some(Bytes::from(body_bytes)), true).await?;
+                session
+                    .write_response_body(Some(Bytes::from(body_bytes)), true)
+                    .await?;
                 METRICS.active_requests.dec();
                 return Ok(true);
             }
@@ -1766,9 +1790,7 @@ impl AiGateway {
             &ctx.applied_guardrails.join(", "),
         )?;
         resp.insert_header("X-MaxLLM-Guardrail-Blocked", guardrail)?;
-        session
-            .write_response_header(Box::new(resp), false)
-            .await?;
+        session.write_response_header(Box::new(resp), false).await?;
         session
             .write_response_body(Some(Bytes::from(error_bytes)), true)
             .await?;

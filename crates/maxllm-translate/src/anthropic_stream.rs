@@ -58,8 +58,16 @@ impl AnthropicToOpenAIStream {
             "message_start" => {
                 let parsed: Value = serde_json::from_str(&data_line).ok()?;
                 let msg = parsed.get("message")?;
-                self.msg_id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("chatcmpl-stream").to_string();
-                self.model = msg.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                self.msg_id = msg
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("chatcmpl-stream")
+                    .to_string();
+                self.model = msg
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
 
                 if !self.sent_role {
                     self.sent_role = true;
@@ -110,7 +118,10 @@ impl AnthropicToOpenAIStream {
                         Some(format!("data: {}\n\n", chunk))
                     }
                     "input_json_delta" => {
-                        let partial = delta.get("partial_json").and_then(|v| v.as_str()).unwrap_or("");
+                        let partial = delta
+                            .get("partial_json")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         let index = parsed.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
                         let chunk = serde_json::json!({
                             "id": self.msg_id,
@@ -128,13 +139,17 @@ impl AnthropicToOpenAIStream {
             "message_delta" => {
                 let parsed: Value = serde_json::from_str(&data_line).ok()?;
                 let delta = parsed.get("delta")?;
-                let stop_reason = delta.get("stop_reason").and_then(|v| v.as_str()).map(|sr| match sr {
-                    "end_turn" => "stop",
-                    "max_tokens" => "length",
-                    "pause_turn" | "tool_use" => "tool_calls",
-                    "stop_sequence" => "stop",
-                    other => other,
-                });
+                let stop_reason =
+                    delta
+                        .get("stop_reason")
+                        .and_then(|v| v.as_str())
+                        .map(|sr| match sr {
+                            "end_turn" => "stop",
+                            "max_tokens" => "length",
+                            "pause_turn" | "tool_use" => "tool_calls",
+                            "stop_sequence" => "stop",
+                            other => other,
+                        });
 
                 let chunk = serde_json::json!({
                     "id": self.msg_id,
@@ -220,7 +235,9 @@ mod tests {
         let part2 = "ta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
 
         let out1 = stream.process_chunk(part1.as_bytes(), false);
-        assert!(String::from_utf8(out1).unwrap().contains("\"role\":\"assistant\""));
+        assert!(String::from_utf8(out1)
+            .unwrap()
+            .contains("\"role\":\"assistant\""));
 
         let out2 = stream.process_chunk(part2.as_bytes(), true);
         let out2_str = String::from_utf8(out2).unwrap();

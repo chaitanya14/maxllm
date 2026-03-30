@@ -30,10 +30,7 @@ pub enum TeamError {
 // ---------------------------------------------------------------------------
 
 /// Create a new team.
-pub fn create_team(
-    store: &dyn AdminStore,
-    request: TeamCreateRequest,
-) -> Result<Team, TeamError> {
+pub fn create_team(store: &dyn AdminStore, request: TeamCreateRequest) -> Result<Team, TeamError> {
     let team = Team {
         id: Uuid::new_v4().to_string(),
         name: request.name,
@@ -49,11 +46,7 @@ pub fn create_team(
 }
 
 /// Add a virtual key to a team.
-pub fn add_member(
-    store: &dyn AdminStore,
-    team_id: &str,
-    key_id: &str,
-) -> Result<(), TeamError> {
+pub fn add_member(store: &dyn AdminStore, team_id: &str, key_id: &str) -> Result<(), TeamError> {
     // Verify the key exists.
     let mut key = store
         .get_key_by_id(key_id)?
@@ -78,11 +71,7 @@ pub fn add_member(
 }
 
 /// Remove a virtual key from a team.
-pub fn remove_member(
-    store: &dyn AdminStore,
-    team_id: &str,
-    key_id: &str,
-) -> Result<(), TeamError> {
+pub fn remove_member(store: &dyn AdminStore, team_id: &str, key_id: &str) -> Result<(), TeamError> {
     let mut team = store
         .get_team(team_id)?
         .ok_or_else(|| TeamError::NotFound(team_id.to_string()))?;

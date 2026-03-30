@@ -57,9 +57,7 @@ impl WebhookGuardrail {
             .params
             .get("api_base")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                GuardrailError::Config("webhook guardrail requires 'api_base'".into())
-            })?
+            .ok_or_else(|| GuardrailError::Config("webhook guardrail requires 'api_base'".into()))?
             .to_string();
 
         let api_key = config
@@ -259,9 +257,7 @@ impl LakeraGuardrail {
             .params
             .get("api_key")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                GuardrailError::Config("lakera guardrail requires 'api_key'".into())
-            })?
+            .ok_or_else(|| GuardrailError::Config("lakera guardrail requires 'api_key'".into()))?
             .to_string();
 
         let api_base = config

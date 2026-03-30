@@ -112,10 +112,7 @@ impl AdminApi {
                 let team_id = &rest[..rest.len() - "/members".len()];
                 self.handle_add_member(team_id, body)
             }
-            ("DELETE", p)
-                if p.starts_with("/admin/teams/")
-                    && p.contains("/members/") =>
-            {
+            ("DELETE", p) if p.starts_with("/admin/teams/") && p.contains("/members/") => {
                 let rest = &p["/admin/teams/".len()..];
                 if let Some((team_id, key_id)) = rest.split_once("/members/") {
                     self.handle_remove_member(team_id, key_id)
@@ -309,31 +306,16 @@ mod tests {
         let key_id = parse_json(&resp)["key_id"].as_str().unwrap().to_string();
 
         // GET
-        let resp = api.handle_request(
-            "GET",
-            &format!("/admin/keys/{key_id}"),
-            &[],
-            MASTER_KEY,
-        );
+        let resp = api.handle_request("GET", &format!("/admin/keys/{key_id}"), &[], MASTER_KEY);
         assert_eq!(resp.status, 200);
         assert_eq!(parse_json(&resp)["id"].as_str().unwrap(), key_id);
 
         // DELETE (revoke)
-        let resp = api.handle_request(
-            "DELETE",
-            &format!("/admin/keys/{key_id}"),
-            &[],
-            MASTER_KEY,
-        );
+        let resp = api.handle_request("DELETE", &format!("/admin/keys/{key_id}"), &[], MASTER_KEY);
         assert_eq!(resp.status, 200);
 
         // Key should be inactive now.
-        let resp = api.handle_request(
-            "GET",
-            &format!("/admin/keys/{key_id}"),
-            &[],
-            MASTER_KEY,
-        );
+        let resp = api.handle_request("GET", &format!("/admin/keys/{key_id}"), &[], MASTER_KEY);
         let json = parse_json(&resp);
         assert_eq!(json["is_active"].as_bool(), Some(false));
     }

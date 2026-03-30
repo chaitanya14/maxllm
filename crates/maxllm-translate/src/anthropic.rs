@@ -61,7 +61,10 @@ impl ProviderTranslator for AnthropicTranslator {
     fn upstream_headers(&self, api_key: &str) -> Vec<(String, String)> {
         vec![
             ("x-api-key".to_string(), api_key.to_string()),
-            ("anthropic-version".to_string(), ANTHROPIC_VERSION.to_string()),
+            (
+                "anthropic-version".to_string(),
+                ANTHROPIC_VERSION.to_string(),
+            ),
             ("Content-Type".to_string(), "application/json".to_string()),
         ]
     }
@@ -244,7 +247,11 @@ fn anthropic_to_openai_response(resp: &AnthropicResponse) -> OpenAIChatResponse 
     let message = OpenAIMessage {
         role: "assistant".to_string(),
         content,
-        tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+        tool_calls: if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        },
         tool_call_id: None,
         extra: serde_json::Map::new(),
     };
@@ -297,7 +304,10 @@ mod tests {
 
         assert_eq!(parsed.model, "claude-sonnet-4-20250514");
         assert_eq!(parsed.max_tokens, 1024);
-        assert_eq!(parsed.system, Some(Value::String("Be helpful.".to_string())));
+        assert_eq!(
+            parsed.system,
+            Some(Value::String("Be helpful.".to_string()))
+        );
         assert_eq!(parsed.messages.len(), 1);
         assert_eq!(parsed.messages[0].role, "user");
     }
@@ -336,7 +346,9 @@ mod tests {
         .unwrap();
 
         let t = AnthropicTranslator;
-        let result = t.translate_request(&body, Some("claude-haiku-4-5-20251001")).unwrap();
+        let result = t
+            .translate_request(&body, Some("claude-haiku-4-5-20251001"))
+            .unwrap();
         let parsed: AnthropicRequest = serde_json::from_slice(&result.body).unwrap();
         assert_eq!(parsed.model, "claude-haiku-4-5-20251001");
     }
@@ -364,14 +376,19 @@ mod tests {
 
         let tools = parsed.tools.unwrap();
         assert_eq!(tools[0].name, "get_weather");
-        assert_eq!(parsed.tool_choice, Some(serde_json::json!({"type": "auto"})));
+        assert_eq!(
+            parsed.tool_choice,
+            Some(serde_json::json!({"type": "auto"}))
+        );
     }
 
     #[test]
     fn test_headers() {
         let t = AnthropicTranslator;
         let headers = t.upstream_headers("sk-ant-test");
-        assert!(headers.iter().any(|(k, v)| k == "x-api-key" && v == "sk-ant-test"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "x-api-key" && v == "sk-ant-test"));
         assert!(headers.iter().any(|(k, _)| k == "anthropic-version"));
     }
 }

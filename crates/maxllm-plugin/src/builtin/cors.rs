@@ -70,10 +70,7 @@ impl CorsPlugin {
             ("Access-Control-Max-Age".into(), self.max_age.clone()),
         ];
         if self.allow_credentials {
-            headers.push((
-                "Access-Control-Allow-Credentials".into(),
-                "true".into(),
-            ));
+            headers.push(("Access-Control-Allow-Credentials".into(), "true".into()));
         }
         headers
     }
@@ -139,6 +136,8 @@ mod tests {
 
         let plugin = CorsPlugin::from_config("cors", &config).unwrap();
         let headers = plugin.cors_headers();
-        assert!(headers.iter().any(|(k, v)| k == "Access-Control-Allow-Credentials" && v == "true"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "Access-Control-Allow-Credentials" && v == "true"));
     }
 }

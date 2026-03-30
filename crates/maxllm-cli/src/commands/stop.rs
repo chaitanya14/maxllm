@@ -38,9 +38,7 @@ pub fn run() -> i32 {
     // On macOS, check the process name via `ps`.
     // On Linux, check /proc/{pid}/cmdline.
     if !is_maxllm_process(pid) {
-        eprintln!(
-            "PID {pid} does not belong to a maxllm process. Refusing to send signal."
-        );
+        eprintln!("PID {pid} does not belong to a maxllm process. Refusing to send signal.");
         eprintln!("Removing stale PID file.");
         let _ = std::fs::remove_file(&pid_file);
         return 1;

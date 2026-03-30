@@ -86,14 +86,11 @@ impl CelGuardrail {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unnamed");
-                let expr = table
-                    .get("expr")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        GuardrailError::Config(format!(
-                            "cel rule '{rule_name}' requires an 'expr' field"
-                        ))
-                    })?;
+                let expr = table.get("expr").and_then(|v| v.as_str()).ok_or_else(|| {
+                    GuardrailError::Config(format!(
+                        "cel rule '{rule_name}' requires an 'expr' field"
+                    ))
+                })?;
                 let message = table
                     .get("message")
                     .and_then(|v| v.as_str())
@@ -132,10 +129,7 @@ impl CelGuardrail {
 
         let _ = ctx.add_variable("content", input.content);
         let _ = ctx.add_variable("model", input.model);
-        let _ = ctx.add_variable(
-            "client_id",
-            input.client_id.unwrap_or(""),
-        );
+        let _ = ctx.add_variable("client_id", input.client_id.unwrap_or(""));
 
         ctx
     }
@@ -254,17 +248,13 @@ mod tests {
 
     #[test]
     fn test_from_config_valid() {
-        let config = make_config(vec![
-            ("test", "size(content) > 100", "too long"),
-        ]);
+        let config = make_config(vec![("test", "size(content) > 100", "too long")]);
         assert!(CelGuardrail::from_config(&config).is_ok());
     }
 
     #[test]
     fn test_from_config_invalid_expr() {
-        let config = make_config(vec![
-            ("bad", "this is not valid CEL <<<", "error"),
-        ]);
+        let config = make_config(vec![("bad", "this is not valid CEL <<<", "error")]);
         assert!(CelGuardrail::from_config(&config).is_err());
     }
 
@@ -298,9 +288,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_content_size_block() {
-        let config = make_config(vec![
-            ("size-limit", "size(content) > 10", "Content too long"),
-        ]);
+        let config = make_config(vec![(
+            "size-limit",
+            "size(content) > 10",
+            "Content too long",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         // Short content — should pass
@@ -308,15 +300,19 @@ mod tests {
         assert!(matches!(verdict, GuardrailVerdict::Pass));
 
         // Long content — should block
-        let verdict = guard.check_input(&input("this is definitely longer than ten chars", "gpt-4")).await;
+        let verdict = guard
+            .check_input(&input("this is definitely longer than ten chars", "gpt-4"))
+            .await;
         assert!(matches!(verdict, GuardrailVerdict::Block { .. }));
     }
 
     #[tokio::test]
     async fn test_model_check() {
-        let config = make_config(vec![
-            ("model-block", r#"model.startsWith("gpt-3")"#, "GPT-3 not allowed"),
-        ]);
+        let config = make_config(vec![(
+            "model-block",
+            r#"model.startsWith("gpt-3")"#,
+            "GPT-3 not allowed",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         let verdict = guard.check_input(&input("hello", "gpt-3.5-turbo")).await;
@@ -328,27 +324,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_contains_check() {
-        let config = make_config(vec![
-            ("confidential", r#"content.contains("CONFIDENTIAL")"#, "Confidential content blocked"),
-        ]);
+        let config = make_config(vec![(
+            "confidential",
+            r#"content.contains("CONFIDENTIAL")"#,
+            "Confidential content blocked",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
-        let verdict = guard.check_input(&input("This is CONFIDENTIAL data", "gpt-4")).await;
+        let verdict = guard
+            .check_input(&input("This is CONFIDENTIAL data", "gpt-4"))
+            .await;
         assert!(matches!(verdict, GuardrailVerdict::Block { .. }));
 
-        let verdict = guard.check_input(&input("This is normal data", "gpt-4")).await;
+        let verdict = guard
+            .check_input(&input("This is normal data", "gpt-4"))
+            .await;
         assert!(matches!(verdict, GuardrailVerdict::Pass));
     }
 
     #[tokio::test]
     async fn test_combined_conditions() {
-        let config = make_config(vec![
-            (
-                "model-size",
-                r#"model.startsWith("gpt-3") && size(content) > 5000"#,
-                "Large prompts not allowed on GPT-3",
-            ),
-        ]);
+        let config = make_config(vec![(
+            "model-size",
+            r#"model.startsWith("gpt-3") && size(content) > 5000"#,
+            "Large prompts not allowed on GPT-3",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         // GPT-3 with short content — pass
@@ -361,7 +361,9 @@ mod tests {
         assert!(matches!(verdict, GuardrailVerdict::Pass));
 
         // GPT-3 with long content — block
-        let verdict = guard.check_input(&input(&long_content, "gpt-3.5-turbo")).await;
+        let verdict = guard
+            .check_input(&input(&long_content, "gpt-3.5-turbo"))
+            .await;
         assert!(matches!(verdict, GuardrailVerdict::Block { .. }));
     }
 
@@ -398,9 +400,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_check() {
-        let config = make_config(vec![
-            ("no-code", r#"content.contains("```")"#, "Code blocks not allowed in response"),
-        ]);
+        let config = make_config(vec![(
+            "no-code",
+            r#"content.contains("```")"#,
+            "Code blocks not allowed in response",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         let output = GuardrailOutput {
@@ -413,9 +417,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_id_check() {
-        let config = make_config(vec![
-            ("require-auth", r#"client_id == """#, "Authentication required"),
-        ]);
+        let config = make_config(vec![(
+            "require-auth",
+            r#"client_id == """#,
+            "Authentication required",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         // No client_id — should block
@@ -440,9 +446,7 @@ mod tests {
     #[tokio::test]
     async fn test_runtime_error_treated_as_pass() {
         // Division by zero or other runtime error should not block
-        let config = make_config(vec![
-            ("bad-runtime", "1 / 0 > 0", "should not block"),
-        ]);
+        let config = make_config(vec![("bad-runtime", "1 / 0 > 0", "should not block")]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         let verdict = guard.check_input(&input("hello", "gpt-4")).await;
@@ -453,9 +457,11 @@ mod tests {
     #[tokio::test]
     async fn test_non_boolean_result_treated_as_pass() {
         // Expression that returns a string instead of bool
-        let config = make_config(vec![
-            ("string-result", r#""not a bool""#, "should not block"),
-        ]);
+        let config = make_config(vec![(
+            "string-result",
+            r#""not a bool""#,
+            "should not block",
+        )]);
         let guard = CelGuardrail::from_config(&config).unwrap();
 
         let verdict = guard.check_input(&input("hello", "gpt-4")).await;

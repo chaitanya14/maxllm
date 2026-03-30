@@ -99,7 +99,9 @@ impl BudgetEnforcer {
         tokens_out: u64,
         request_id: Option<&str>,
     ) -> Result<f64, BudgetError> {
-        let cost = self.cost_calculator.calculate_cost(model, tokens_in, tokens_out);
+        let cost = self
+            .cost_calculator
+            .calculate_cost(model, tokens_in, tokens_out);
 
         // Update key counters.
         let mut key = self
@@ -161,8 +163,7 @@ impl BudgetEnforcer {
         let mut reset_count = 0;
 
         for mut key in keys {
-            if let (Some(reset_at), Some(reset_days)) =
-                (key.budget_reset_at, key.budget_reset_days)
+            if let (Some(reset_at), Some(reset_days)) = (key.budget_reset_at, key.budget_reset_days)
             {
                 if now >= reset_at {
                     tracing::info!(
@@ -171,8 +172,7 @@ impl BudgetEnforcer {
                         "resetting expired budget"
                     );
                     key.budget_spent_usd = 0.0;
-                    key.budget_reset_at =
-                        Some(now + Duration::days(i64::from(reset_days)));
+                    key.budget_reset_at = Some(now + Duration::days(i64::from(reset_days)));
                     self.store.update_key(key)?;
                     reset_count += 1;
                 }

@@ -32,21 +32,27 @@ impl GatewayMetrics {
             &["provider", "model", "status"],
         )
         .expect("metric");
-        registry.register(Box::new(requests_total.clone())).expect("register");
+        registry
+            .register(Box::new(requests_total.clone()))
+            .expect("register");
 
         let tokens_in_total = IntCounterVec::new(
             Opts::new("maxllm_tokens_in_total", "Total input tokens"),
             &["provider", "model"],
         )
         .expect("metric");
-        registry.register(Box::new(tokens_in_total.clone())).expect("register");
+        registry
+            .register(Box::new(tokens_in_total.clone()))
+            .expect("register");
 
         let tokens_out_total = IntCounterVec::new(
             Opts::new("maxllm_tokens_out_total", "Total output tokens"),
             &["provider", "model"],
         )
         .expect("metric");
-        registry.register(Box::new(tokens_out_total.clone())).expect("register");
+        registry
+            .register(Box::new(tokens_out_total.clone()))
+            .expect("register");
 
         let request_duration_seconds = HistogramVec::new(
             HistogramOpts::new("maxllm_request_duration_seconds", "Request latency")
@@ -54,18 +60,24 @@ impl GatewayMetrics {
             &["provider"],
         )
         .expect("metric");
-        registry.register(Box::new(request_duration_seconds.clone())).expect("register");
+        registry
+            .register(Box::new(request_duration_seconds.clone()))
+            .expect("register");
 
-        let active_requests = IntGauge::new("maxllm_active_requests", "Currently active requests")
-            .expect("metric");
-        registry.register(Box::new(active_requests.clone())).expect("register");
+        let active_requests =
+            IntGauge::new("maxllm_active_requests", "Currently active requests").expect("metric");
+        registry
+            .register(Box::new(active_requests.clone()))
+            .expect("register");
 
         let fallbacks_total = IntCounterVec::new(
             Opts::new("maxllm_fallbacks_total", "Total fallback invocations"),
             &["from_provider", "to_provider"],
         )
         .expect("metric");
-        registry.register(Box::new(fallbacks_total.clone())).expect("register");
+        registry
+            .register(Box::new(fallbacks_total.clone()))
+            .expect("register");
 
         Self {
             registry,
@@ -82,7 +94,9 @@ impl GatewayMetrics {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
         let mut buffer = Vec::new();
-        encoder.encode(&metric_families, &mut buffer).expect("encode");
+        encoder
+            .encode(&metric_families, &mut buffer)
+            .expect("encode");
         String::from_utf8(buffer).expect("utf8")
     }
 }

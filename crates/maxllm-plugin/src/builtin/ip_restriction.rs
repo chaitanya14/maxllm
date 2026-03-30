@@ -29,7 +29,10 @@ pub struct IpRestrictionPlugin {
 
 impl IpRestrictionPlugin {
     pub fn from_config(name: &str, config: &toml::Table) -> Result<Self, PluginError> {
-        let restriction_type = match config.get("type").and_then(|v| v.as_str()).unwrap_or("deny")
+        let restriction_type = match config
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("deny")
         {
             "allow" => RestrictionType::Allow,
             "deny" => RestrictionType::Deny,
@@ -48,11 +51,9 @@ impl IpRestrictionPlugin {
                     .filter_map(|v| v.as_str())
                     .filter_map(|s| {
                         // Try parsing as network first, then as single IP
-                        s.parse::<IpNet>().ok().or_else(|| {
-                            s.parse::<IpAddr>()
-                                .ok()
-                                .map(|ip| IpNet::from(ip))
-                        })
+                        s.parse::<IpNet>()
+                            .ok()
+                            .or_else(|| s.parse::<IpAddr>().ok().map(|ip| IpNet::from(ip)))
                     })
                     .collect()
             })

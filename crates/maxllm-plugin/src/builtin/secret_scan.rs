@@ -132,10 +132,8 @@ impl SecretScanPlugin {
                         .get("name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("custom");
-                    let pat_regex = table
-                        .get("regex")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
+                    let pat_regex =
+                        table.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
                             PluginError::Config(
                                 "custom_patterns entries require a 'regex' field".into(),
                             )
@@ -191,10 +189,7 @@ impl SecretScanPlugin {
             // GitLab personal/project/group access tokens.
             "gitlab_token" => (r"glpat-[A-Za-z0-9\-]{20,}", "[GITLAB_TOKEN]"),
             // Slack bot/user/webhook tokens.
-            "slack_token" => (
-                r"xox[bporas]-[A-Za-z0-9\-]{10,}",
-                "[SLACK_TOKEN]",
-            ),
+            "slack_token" => (r"xox[bporas]-[A-Za-z0-9\-]{10,}", "[SLACK_TOKEN]"),
             // JSON Web Tokens (three base64url segments).
             "jwt" => (
                 r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
@@ -206,10 +201,7 @@ impl SecretScanPlugin {
                 "[PRIVATE_KEY]",
             ),
             // Passwords in URLs (basic auth).
-            "password_in_url" => (
-                r"://[^:\s]+:[^@\s]+@[^\s]+",
-                "://[CREDENTIALS]@",
-            ),
+            "password_in_url" => (r"://[^:\s]+:[^@\s]+@[^\s]+", "://[CREDENTIALS]@"),
             // Generic API key patterns (sk-..., api_key=..., etc.).
             "generic_api_key" => (
                 r#"(?i)(?:sk-[A-Za-z0-9]{20,}|(?:api[_-]?key|apikey|access[_-]?token)\s*[=:]\s*['"]?[A-Za-z0-9\-_]{20,}['"]?)"#,
@@ -359,8 +351,7 @@ mod tests {
     fn test_detect_github_pat() {
         let plugin = default_plugin();
         // ghp_ tokens are exactly 36 alphanumeric chars after prefix
-        let matches =
-            plugin.scan_text("token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij");
+        let matches = plugin.scan_text("token: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern_name, "github_token");
     }
@@ -411,8 +402,7 @@ mod tests {
     #[test]
     fn test_detect_generic_api_key() {
         let plugin = default_plugin();
-        let matches =
-            plugin.scan_text("use this: sk-abcdefghijklmnopqrstuvwxyz1234");
+        let matches = plugin.scan_text("use this: sk-abcdefghijklmnopqrstuvwxyz1234");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern_name, "generic_api_key");
     }
@@ -420,8 +410,7 @@ mod tests {
     #[test]
     fn test_detect_api_key_assignment() {
         let plugin = default_plugin();
-        let matches =
-            plugin.scan_text("api_key = 'abcdef1234567890abcdef1234567890'");
+        let matches = plugin.scan_text("api_key = 'abcdef1234567890abcdef1234567890'");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern_name, "generic_api_key");
     }
@@ -479,8 +468,7 @@ mod tests {
         let plugin = SecretScanPlugin::from_config("ss", &config).unwrap();
         assert_eq!(plugin.patterns.len(), 2);
 
-        let matches =
-            plugin.scan_text("token: mxl_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef");
+        let matches = plugin.scan_text("token: mxl_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern_name, "internal_token");
     }

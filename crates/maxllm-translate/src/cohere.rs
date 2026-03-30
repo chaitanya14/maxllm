@@ -216,16 +216,8 @@ fn cohere_to_openai_response(resp: &CohereResponse) -> OpenAIChatResponse {
     };
 
     let usage = resp.usage.as_ref().map(|u| {
-        let input = u
-            .tokens
-            .as_ref()
-            .and_then(|t| t.input_tokens)
-            .unwrap_or(0);
-        let output = u
-            .tokens
-            .as_ref()
-            .and_then(|t| t.output_tokens)
-            .unwrap_or(0);
+        let input = u.tokens.as_ref().and_then(|t| t.input_tokens).unwrap_or(0);
+        let output = u.tokens.as_ref().and_then(|t| t.output_tokens).unwrap_or(0);
         OpenAIUsage {
             prompt_tokens: input,
             completion_tokens: output,
@@ -239,10 +231,16 @@ fn cohere_to_openai_response(resp: &CohereResponse) -> OpenAIChatResponse {
         .unwrap_or(0);
 
     OpenAIChatResponse {
-        id: resp.id.clone().unwrap_or_else(|| format!("chatcmpl-cohere-{created}")),
+        id: resp
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("chatcmpl-cohere-{created}")),
         object: "chat.completion".to_string(),
         created,
-        model: resp.model.clone().unwrap_or_else(|| "command-r-plus".to_string()),
+        model: resp
+            .model
+            .clone()
+            .unwrap_or_else(|| "command-r-plus".to_string()),
         choices: vec![OpenAIChoice {
             index: 0,
             message,

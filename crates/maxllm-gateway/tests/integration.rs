@@ -464,14 +464,11 @@ async fn test_fallback_on_primary_failure() {
 
     // Fallback returns success
     Mock::given(method("POST"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(openai_response("from fallback")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response("from fallback")))
         .mount(&fallback)
         .await;
 
-    let config = FALLBACK_CONFIG
-        .replace("{FALLBACK_URL}", &fallback.uri());
+    let config = FALLBACK_CONFIG.replace("{FALLBACK_URL}", &fallback.uri());
     let gw = TestGateway::start(&config, &primary.uri()).await;
     let c = client();
 
@@ -829,7 +826,10 @@ provider = "ollama"
 
     let text = resp.text().await.unwrap();
     // SSE chunks should start with "data: "
-    assert!(text.contains("data: "), "response should contain SSE data lines");
+    assert!(
+        text.contains("data: "),
+        "response should contain SSE data lines"
+    );
     // Verify at least one chunk has content
     let mut has_content = false;
     for line in text.lines() {
@@ -893,7 +893,10 @@ provider = "gemini"
     let resp = c
         .post(gw.url("/v1/chat/completions"))
         .header("Authorization", "Bearer test-key")
-        .json(&chat_body("gemini-2.5-flash", "What is 2+2? Answer in one word."))
+        .json(&chat_body(
+            "gemini-2.5-flash",
+            "What is 2+2? Answer in one word.",
+        ))
         .send()
         .await
         .unwrap();
@@ -1156,7 +1159,9 @@ provider = "gemini"
         .unwrap()
         .to_lowercase();
     // Pirate speech should contain typical pirate words
-    let pirate_words = ["ahoy", "matey", "arr", "ye", "sail", "sea", "pirate", "avast", "aye"];
+    let pirate_words = [
+        "ahoy", "matey", "arr", "ye", "sail", "sea", "pirate", "avast", "aye",
+    ];
     let has_pirate = pirate_words.iter().any(|w| content.contains(w));
     assert!(has_pirate, "Expected pirate speak, got: {content}");
 }

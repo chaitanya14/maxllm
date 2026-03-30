@@ -41,7 +41,11 @@ pub struct OpenAICompatTranslator {
 }
 
 impl OpenAICompatTranslator {
-    pub fn new(provider_name: impl Into<String>, upstream_path: impl Into<String>, auth_style: AuthStyle) -> Self {
+    pub fn new(
+        provider_name: impl Into<String>,
+        upstream_path: impl Into<String>,
+        auth_style: AuthStyle,
+    ) -> Self {
         Self {
             provider_name: provider_name.into(),
             upstream_path: upstream_path.into(),
@@ -61,12 +65,20 @@ impl OpenAICompatTranslator {
 
     /// Pre-configured translator for Fireworks AI.
     pub fn fireworks() -> Self {
-        Self::new("fireworks", "/inference/v1/chat/completions", AuthStyle::Bearer)
+        Self::new(
+            "fireworks",
+            "/inference/v1/chat/completions",
+            AuthStyle::Bearer,
+        )
     }
 
     /// Pre-configured translator for DeepInfra.
     pub fn deepinfra() -> Self {
-        Self::new("deepinfra", "/v1/openai/chat/completions", AuthStyle::Bearer)
+        Self::new(
+            "deepinfra",
+            "/v1/openai/chat/completions",
+            AuthStyle::Bearer,
+        )
     }
 
     /// Pre-configured translator for Mistral.
@@ -136,9 +148,7 @@ impl ProviderTranslator for OpenAICompatTranslator {
     }
 
     fn upstream_headers(&self, api_key: &str) -> Vec<(String, String)> {
-        let mut headers = vec![
-            ("Content-Type".to_string(), "application/json".to_string()),
-        ];
+        let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         match &self.auth_style {
             AuthStyle::Bearer => {
                 headers.push(("Authorization".to_string(), format!("Bearer {api_key}")));
@@ -203,7 +213,9 @@ mod tests {
             AuthStyle::ApiKey("X-Api-Key".to_string()),
         );
         let headers = t.upstream_headers("my-key");
-        assert!(headers.iter().any(|(k, v)| k == "X-Api-Key" && v == "my-key"));
+        assert!(headers
+            .iter()
+            .any(|(k, v)| k == "X-Api-Key" && v == "my-key"));
         assert!(!headers.iter().any(|(k, _)| k == "Authorization"));
     }
 
@@ -242,7 +254,8 @@ mod tests {
 
     #[test]
     fn test_streaming_detection() {
-        let body = br#"{"model":"mixtral","messages":[{"role":"user","content":"Hi"}],"stream":true}"#;
+        let body =
+            br#"{"model":"mixtral","messages":[{"role":"user","content":"Hi"}],"stream":true}"#;
         let t = OpenAICompatTranslator::mistral();
         let result = t.translate_request(body, None).unwrap();
         assert!(result.is_streaming);

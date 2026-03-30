@@ -278,7 +278,10 @@ pub struct GeminiCandidate {
 pub struct GeminiUsageMetadata {
     #[serde(rename = "promptTokenCount", skip_serializing_if = "Option::is_none")]
     pub prompt_token_count: Option<u64>,
-    #[serde(rename = "candidatesTokenCount", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "candidatesTokenCount",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub candidates_token_count: Option<u64>,
 }
 

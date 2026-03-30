@@ -6,8 +6,8 @@
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 
-use crate::factory::PluginError;
 use crate::builtin::pii_filter::GuardrailMode;
+use crate::factory::PluginError;
 use crate::{HttpResponse, Plugin, PluginCtx, RequestAction};
 use async_trait::async_trait;
 use pingora::proxy::Session;
@@ -127,23 +127,18 @@ impl RegexGuardPlugin {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unnamed");
-                let rule_regex = table
-                    .get("regex")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        PluginError::Config(format!(
-                            "regex_guard rule '{rule_name}' requires a 'regex' field"
-                        ))
-                    })?;
+                let rule_regex = table.get("regex").and_then(|v| v.as_str()).ok_or_else(|| {
+                    PluginError::Config(format!(
+                        "regex_guard rule '{rule_name}' requires a 'regex' field"
+                    ))
+                })?;
                 let rule_replacement = table
                     .get("replacement")
                     .and_then(|v| v.as_str())
                     .unwrap_or("[REDACTED]");
 
                 let regex = Regex::new(rule_regex).map_err(|e| {
-                    PluginError::Config(format!(
-                        "invalid regex for rule '{rule_name}': {e}"
-                    ))
+                    PluginError::Config(format!("invalid regex for rule '{rule_name}': {e}"))
                 })?;
 
                 rules.push(RegexRule {
@@ -231,8 +226,7 @@ impl Plugin for RegexGuardPlugin {
         if let Some(query) = session.req_header().uri.query() {
             let matches = self.scan_text(query);
             if !matches.is_empty() {
-                let rule_names: Vec<&str> =
-                    matches.iter().map(|m| m.rule_name.as_str()).collect();
+                let rule_names: Vec<&str> = matches.iter().map(|m| m.rule_name.as_str()).collect();
                 tracing::warn!(
                     plugin = self.name.as_str(),
                     rules = ?rule_names,
@@ -283,9 +277,10 @@ mod tests {
 
     #[test]
     fn test_from_config() {
-        let plugin = make_plugin(vec![
-            ("sql_injection", r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b"),
-        ]);
+        let plugin = make_plugin(vec![(
+            "sql_injection",
+            r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b",
+        )]);
         assert_eq!(plugin.action, RegexGuardAction::Block);
         assert_eq!(plugin.mode, GuardrailMode::PreCall);
         assert_eq!(plugin.rules.len(), 1);
@@ -332,9 +327,10 @@ mod tests {
 
     #[test]
     fn test_scan_sql_injection() {
-        let plugin = make_plugin(vec![
-            ("sql_injection", r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b"),
-        ]);
+        let plugin = make_plugin(vec![(
+            "sql_injection",
+            r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b",
+        )]);
 
         let matches = plugin.scan_text("SELECT * FROM users WHERE id = 1");
         assert_eq!(matches.len(), 1);
@@ -343,9 +339,10 @@ mod tests {
 
     #[test]
     fn test_scan_no_match() {
-        let plugin = make_plugin(vec![
-            ("sql_injection", r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b"),
-        ]);
+        let plugin = make_plugin(vec![(
+            "sql_injection",
+            r"(?i)\b(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b.*\b(?:FROM|INTO|TABLE|SET)\b",
+        )]);
         let matches = plugin.scan_text("What is the weather like today?");
         assert!(matches.is_empty());
     }

@@ -451,7 +451,9 @@ impl AdminStore for SqliteStore {
 
         if let Some(kid) = key_id {
             let mut stmt = conn
-                .prepare("SELECT * FROM spend_logs WHERE key_id = ?1 ORDER BY timestamp DESC LIMIT ?2")
+                .prepare(
+                    "SELECT * FROM spend_logs WHERE key_id = ?1 ORDER BY timestamp DESC LIMIT ?2",
+                )
                 .map_err(|e| StoreError::Internal(e.to_string()))?;
             let rows = stmt
                 .query_map(params![kid, limit as i64], spend_from_row)
@@ -494,14 +496,16 @@ impl AdminStore for SqliteStore {
                     COALESCE(SUM(tokens_out), 0) as total_out
              FROM spend_logs {where_clause}"
         );
-        let mut stmt = conn.prepare(&totals_sql)
+        let mut stmt = conn
+            .prepare(&totals_sql)
             .map_err(|e| StoreError::Internal(e.to_string()))?;
         let bind_params: Vec<Box<dyn rusqlite::types::ToSql>> = if let Some(kid) = key_id {
             vec![Box::new(kid.to_string())]
         } else {
             vec![]
         };
-        let bind_refs: Vec<&dyn rusqlite::types::ToSql> = bind_params.iter().map(|p| p.as_ref()).collect();
+        let bind_refs: Vec<&dyn rusqlite::types::ToSql> =
+            bind_params.iter().map(|p| p.as_ref()).collect();
         let (total_spend, total_requests, total_in, total_out) = stmt
             .query_row(bind_refs.as_slice(), |row| {
                 Ok((
@@ -525,7 +529,8 @@ impl AdminStore for SqliteStore {
                  GROUP BY {group_col}
                  ORDER BY spend_usd DESC"
             );
-            let mut stmt = conn.prepare(&sql)
+            let mut stmt = conn
+                .prepare(&sql)
                 .map_err(|e| StoreError::Internal(e.to_string()))?;
             let rows = stmt
                 .query_map(bind_refs.as_slice(), |row| {
@@ -618,7 +623,8 @@ impl AdminStore for SqliteStore {
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| StoreError::Internal(e.to_string()))?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
             .query_map(param_refs.as_slice(), request_log_from_row)
             .map_err(|e| StoreError::Internal(e.to_string()))?;

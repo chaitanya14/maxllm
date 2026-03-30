@@ -36,7 +36,8 @@ fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
         (None, None) => true,
         (Some('*'), _) => {
             // '*' matches zero or more characters.
-            glob_match_inner(&pat[1..], txt) || (!txt.is_empty() && glob_match_inner(pat, &txt[1..]))
+            glob_match_inner(&pat[1..], txt)
+                || (!txt.is_empty() && glob_match_inner(pat, &txt[1..]))
         }
         (Some('?'), Some(_)) => glob_match_inner(&pat[1..], &txt[1..]),
         (Some(p), Some(t)) if *p == *t => glob_match_inner(&pat[1..], &txt[1..]),

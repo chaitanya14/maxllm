@@ -55,9 +55,7 @@ impl ProviderSelector {
                 // Simple priority: try primary first, then fallbacks in order
                 healthy.into_iter().next()
             }
-            RoutingStrategy::Weighted => {
-                self.weighted_select(&healthy)
-            }
+            RoutingStrategy::Weighted => self.weighted_select(&healthy),
             RoutingStrategy::RoundRobin => {
                 let idx = ROUND_ROBIN_COUNTER.fetch_add(1, Ordering::Relaxed) as usize;
                 Some(healthy[idx % healthy.len()])
@@ -159,10 +157,7 @@ mod tests {
 
     #[test]
     fn test_round_robin() {
-        let candidates = vec![
-            make_target("a", 100, true),
-            make_target("b", 100, false),
-        ];
+        let candidates = vec![make_target("a", 100, true), make_target("b", 100, false)];
         let selector = ProviderSelector::new(RoutingStrategy::RoundRobin);
         let mut ctx = RequestCtx::new();
 

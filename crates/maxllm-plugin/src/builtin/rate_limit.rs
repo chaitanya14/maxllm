@@ -98,7 +98,8 @@ impl Plugin for RateLimitPlugin {
                 .push(("Retry-After".into(), remaining_secs.to_string()));
             resp.headers
                 .push(("X-RateLimit-Limit".into(), self.max_requests.to_string()));
-            resp.headers.push(("X-RateLimit-Remaining".into(), "0".into()));
+            resp.headers
+                .push(("X-RateLimit-Remaining".into(), "0".into()));
             return Ok(RequestAction::Respond(resp));
         }
 

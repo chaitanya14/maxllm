@@ -93,7 +93,10 @@ provider = "openai"
 /// Generate a starter configuration file.
 pub fn run(output: PathBuf) -> i32 {
     if output.exists() {
-        eprintln!("Error: {} already exists. Remove it first or choose a different path.", output.display());
+        eprintln!(
+            "Error: {} already exists. Remove it first or choose a different path.",
+            output.display()
+        );
         return 1;
     }
 

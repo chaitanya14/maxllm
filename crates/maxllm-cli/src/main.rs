@@ -142,9 +142,7 @@ async fn main() {
     let cli = Cli::parse();
 
     let exit_code = match cli.command {
-        Commands::Start { config, daemon } => {
-            commands::start::run(config, daemon)
-        }
+        Commands::Start { config, daemon } => commands::start::run(config, daemon),
         Commands::Stop => commands::stop::run(),
         Commands::Status { config } => commands::status::run(config).await,
         Commands::Health { url, config } => {
