@@ -248,20 +248,11 @@ pub struct RateLimitConfig {
     pub tokens_per_minute: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct MetricsConfig {
     #[serde(default)]
     pub enabled: bool,
     pub listen: Option<SocketAddr>,
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            listen: None,
-        }
-    }
 }
 
 /// Guardrail configuration — content-level inspection with provider integration.
@@ -309,7 +300,7 @@ impl Config {
     }
 
     /// Parse config from a TOML string (env vars already expanded).
-    pub fn from_str(s: &str) -> Result<Self, ConfigError> {
+    pub fn parse(s: &str) -> Result<Self, ConfigError> {
         let expanded = expand_env_vars(s);
         let config: Config = toml::from_str(&expanded)?;
         config.validate()?;
@@ -386,7 +377,7 @@ kind = "openai"
 base_url = "https://api.openai.com"
 api_key = "sk-test"
 "#;
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.server.listen.port(), 8080);
         assert_eq!(config.providers.len(), 1);
         assert_eq!(config.providers["openai"].kind, ProviderKind::OpenAI);
@@ -426,7 +417,7 @@ provider = "openai"
 fallback = ["anthropic"]
 timeout_secs = 120
 "#;
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         assert_eq!(config.providers.len(), 2);
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.routes[0].fallback, vec!["anthropic"]);
@@ -449,7 +440,7 @@ api_key = "sk-test"
 path = "/v1/chat"
 provider = "nonexistent"
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse(toml).unwrap_err();
         assert!(err.to_string().contains("unknown provider"));
     }
 
@@ -472,7 +463,7 @@ kind = "openai"
 base_url = "https://api.openai.com"
 api_key = "sk-test"
 "#;
-        let config = Config::from_str(toml).unwrap();
+        let config = Config::parse(toml).unwrap();
         let p = &config.providers["openai"];
         assert_eq!(p.max_fails, 3);
         assert_eq!(p.fail_timeout_secs, 60);

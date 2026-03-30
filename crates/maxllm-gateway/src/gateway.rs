@@ -112,6 +112,7 @@ pub struct ProviderState {
     pub tls: bool,
     pub sni: String,
     pub weight: u32,
+    #[allow(dead_code)]
     pub tags: Vec<String>,
     pub default_model: Option<String>,
 }
@@ -135,6 +136,7 @@ pub struct AiGateway {
     /// Wrapped in Arc so a clone can be shared with the file watcher thread.
     pub hot: Arc<arc_swap::ArcSwap<HotState>>,
     /// Budget enforcer for per-key budget tracking.
+    #[allow(dead_code)]
     pub budget_enforcer: Option<Arc<maxllm_admin::BudgetEnforcer>>,
     /// Admin API handler (None if admin not configured).
     pub admin_api: Option<Arc<maxllm_admin::AdminApi>>,
@@ -312,7 +314,7 @@ pub fn build_hot_state(config: &Config) -> Result<HotState, Box<dyn std::error::
             }
         }
 
-        for (alias, _target) in &config.model_aliases {
+        for alias in config.model_aliases.keys() {
             if seen.insert(alias.clone()) {
                 models.push(serde_json::json!({
                     "id": alias,
@@ -395,6 +397,7 @@ impl AiGateway {
     }
 
     /// Reload the hot-reloadable state from a new config.
+    #[allow(dead_code)]
     /// Returns a summary of what changed.
     pub fn reload(&self, config: &Config) -> Result<String, Box<dyn std::error::Error>> {
         let old = self.hot.load();
@@ -1200,7 +1203,7 @@ impl ProxyHttp for AiGateway {
         let skip_response_translation = ctx.endpoint_type == EndpointType::Passthrough
             || ctx.endpoint_type == EndpointType::Native
             || ctx.endpoint_type == EndpointType::Embeddings
-            || provider.map_or(false, |p| p.translator.name() == "openai");
+            || provider.is_some_and(|p| p.translator.name() == "openai");
         if !skip_response_translation {
             let _ = upstream_response.remove_header("Content-Length");
         }
@@ -1214,7 +1217,7 @@ impl ProxyHttp for AiGateway {
         // For Gemini streaming: we got a JSON response from generateContent
         // but client wants SSE. Set the right content type.
         let is_gemini_streaming =
-            ctx.is_streaming && provider.map_or(false, |p| p.kind == ProviderKind::Gemini);
+            ctx.is_streaming && provider.is_some_and(|p| p.kind == ProviderKind::Gemini);
         if is_gemini_streaming {
             upstream_response.insert_header("Content-Type", "text/event-stream")?;
             let _ = upstream_response.remove_header("Content-Length");
@@ -1235,15 +1238,15 @@ impl ProxyHttp for AiGateway {
             let total_ms = now.duration_since(ctx.request_start).as_millis();
             let overhead_ms = total_ms.saturating_sub(upstream_ms);
 
-            upstream_response.insert_header("X-MaxLLM-Upstream-Ms", &upstream_ms.to_string())?;
-            upstream_response.insert_header("X-MaxLLM-Overhead-Ms", &overhead_ms.to_string())?;
+            upstream_response.insert_header("X-MaxLLM-Upstream-Ms", upstream_ms.to_string())?;
+            upstream_response.insert_header("X-MaxLLM-Overhead-Ms", overhead_ms.to_string())?;
         }
 
         // Add applied guardrails header
         if !ctx.applied_guardrails.is_empty() {
             upstream_response.insert_header(
                 "X-MaxLLM-Applied-Guardrails",
-                &ctx.applied_guardrails.join(", "),
+                ctx.applied_guardrails.join(", "),
             )?;
         }
 
@@ -1417,7 +1420,7 @@ impl ProxyHttp for AiGateway {
         // ── NORMAL MODE: translate provider → OpenAI format ──
         if ctx.is_streaming {
             let provider = hot.providers.get(&ctx.provider_name);
-            let is_gemini = provider.map_or(false, |p| p.kind == ProviderKind::Gemini);
+            let is_gemini = provider.is_some_and(|p| p.kind == ProviderKind::Gemini);
 
             if is_gemini {
                 // Gemini streaming: we sent a non-streaming request to Gemini
@@ -1784,10 +1787,10 @@ impl AiGateway {
         let error_bytes = error_body.to_string().into_bytes();
         let mut resp = pingora::http::ResponseHeader::build(400, Some(4))?;
         resp.insert_header("Content-Type", "application/json")?;
-        resp.insert_header("Content-Length", &error_bytes.len().to_string())?;
+        resp.insert_header("Content-Length", error_bytes.len().to_string())?;
         resp.insert_header(
             "X-MaxLLM-Applied-Guardrails",
-            &ctx.applied_guardrails.join(", "),
+            ctx.applied_guardrails.join(", "),
         )?;
         resp.insert_header("X-MaxLLM-Guardrail-Blocked", guardrail)?;
         session.write_response_header(Box::new(resp), false).await?;
@@ -1822,7 +1825,7 @@ fn normalize_error_response(
     if let Some(err) = parsed.get("error") {
         if err.get("message").is_some()
             && err.get("type").is_some()
-            && !parsed.get("type").is_some()
+            && parsed.get("type").is_none()
         {
             return None;
         }

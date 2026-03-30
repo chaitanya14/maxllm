@@ -110,7 +110,7 @@ impl Plugin for KeywordBlockPlugin {
             );
             return Ok(RequestAction::Respond(HttpResponse::json_error(
                 400,
-                &format!("Request blocked: prohibited content detected"),
+                "Request blocked: prohibited content detected",
             )));
         }
 
@@ -124,7 +124,7 @@ impl Plugin for KeywordBlockPlugin {
                 );
                 return Ok(RequestAction::Respond(HttpResponse::json_error(
                     400,
-                    &format!("Request blocked: prohibited content detected"),
+                    "Request blocked: prohibited content detected",
                 )));
             }
         }

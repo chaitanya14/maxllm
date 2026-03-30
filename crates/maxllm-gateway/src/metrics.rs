@@ -15,6 +15,7 @@ pub static METRICS: Lazy<GatewayMetrics> = Lazy::new(GatewayMetrics::new);
 
 pub struct GatewayMetrics {
     pub registry: Registry,
+    #[allow(dead_code)]
     pub requests_total: IntCounterVec,
     pub tokens_in_total: IntCounterVec,
     pub tokens_out_total: IntCounterVec,

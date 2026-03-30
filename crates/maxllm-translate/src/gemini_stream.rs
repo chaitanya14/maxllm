@@ -25,6 +25,12 @@ pub struct GeminiToOpenAIStream {
     tool_call_index: u64,
 }
 
+impl Default for GeminiToOpenAIStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GeminiToOpenAIStream {
     pub fn new() -> Self {
         let created = SystemTime::now()

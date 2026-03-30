@@ -53,7 +53,7 @@ impl IpRestrictionPlugin {
                         // Try parsing as network first, then as single IP
                         s.parse::<IpNet>()
                             .ok()
-                            .or_else(|| s.parse::<IpAddr>().ok().map(|ip| IpNet::from(ip)))
+                            .or_else(|| s.parse::<IpAddr>().ok().map(IpNet::from))
                     })
                     .collect()
             })

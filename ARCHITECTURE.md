@@ -53,7 +53,7 @@ maxllm/
 
 **Key Functions:**
 - `Config::from_file(path)` -- Load from TOML file with env var expansion (`${VAR_NAME}`)
-- `Config::from_str(s)` -- Parse from string
+- `Config::parse(s)` -- Parse from string
 - `expand_env_vars(input)` -- Replace `${VAR}` patterns with environment values
 - Validation: ensures all route providers exist, all referenced plugins exist
 

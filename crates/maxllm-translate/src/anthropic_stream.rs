@@ -21,6 +21,12 @@ pub struct AnthropicToOpenAIStream {
     created: u64,
 }
 
+impl Default for AnthropicToOpenAIStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicToOpenAIStream {
     pub fn new() -> Self {
         let created = SystemTime::now()
@@ -45,8 +51,8 @@ impl AnthropicToOpenAIStream {
                 event_type = et.trim().to_string();
             } else if let Some(d) = line.strip_prefix("data: ") {
                 data_line = d.to_string();
-            } else if line.starts_with("data:") {
-                data_line = line[5..].to_string();
+            } else if let Some(d) = line.strip_prefix("data:") {
+                data_line = d.to_string();
             }
         }
 

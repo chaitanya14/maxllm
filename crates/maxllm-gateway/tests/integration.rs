@@ -1093,7 +1093,7 @@ async fn test_embeddings_endpoint() {
     let data = body["data"].as_array().unwrap();
     assert_eq!(data.len(), 1);
     assert_eq!(data[0]["object"], "embedding");
-    assert!(data[0]["embedding"].as_array().unwrap().len() > 0);
+    assert!(!data[0]["embedding"].as_array().unwrap().is_empty());
     assert_eq!(body["usage"]["prompt_tokens"], 8);
 }
 

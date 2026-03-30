@@ -39,7 +39,7 @@ pub enum GuardrailMode {
 }
 
 impl GuardrailMode {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "post_call" => Self::PostCall,
             "both" => Self::Both,
@@ -57,7 +57,7 @@ pub enum GuardrailAction {
 }
 
 impl GuardrailAction {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "redact" => Self::Redact,
             "log_only" => Self::LogOnly,
@@ -408,9 +408,9 @@ pub fn build_engine(configs: &[GuardrailConfig]) -> Result<GuardrailEngine, Guar
         entries.push(GuardrailEntry {
             name: config.name.clone(),
             guardrail,
-            mode: GuardrailMode::from_str(&config.mode),
+            mode: GuardrailMode::parse(&config.mode),
             default_on: config.default_on,
-            action: GuardrailAction::from_str(&config.action),
+            action: GuardrailAction::parse(&config.action),
         });
     }
 
@@ -541,24 +541,24 @@ mod tests {
 
     #[test]
     fn test_guardrail_mode_from_str() {
-        assert_eq!(GuardrailMode::from_str("pre_call"), GuardrailMode::PreCall);
+        assert_eq!(GuardrailMode::parse("pre_call"), GuardrailMode::PreCall);
         assert_eq!(
-            GuardrailMode::from_str("post_call"),
+            GuardrailMode::parse("post_call"),
             GuardrailMode::PostCall
         );
-        assert_eq!(GuardrailMode::from_str("both"), GuardrailMode::Both);
-        assert_eq!(GuardrailMode::from_str("unknown"), GuardrailMode::PreCall);
+        assert_eq!(GuardrailMode::parse("both"), GuardrailMode::Both);
+        assert_eq!(GuardrailMode::parse("unknown"), GuardrailMode::PreCall);
     }
 
     #[test]
     fn test_guardrail_action_from_str() {
-        assert_eq!(GuardrailAction::from_str("block"), GuardrailAction::Block);
-        assert_eq!(GuardrailAction::from_str("redact"), GuardrailAction::Redact);
+        assert_eq!(GuardrailAction::parse("block"), GuardrailAction::Block);
+        assert_eq!(GuardrailAction::parse("redact"), GuardrailAction::Redact);
         assert_eq!(
-            GuardrailAction::from_str("log_only"),
+            GuardrailAction::parse("log_only"),
             GuardrailAction::LogOnly
         );
-        assert_eq!(GuardrailAction::from_str("unknown"), GuardrailAction::Block);
+        assert_eq!(GuardrailAction::parse("unknown"), GuardrailAction::Block);
     }
 
     #[tokio::test]

@@ -64,7 +64,7 @@ pub fn add_member(store: &dyn AdminStore, team_id: &str, key_id: &str) -> Result
     store.update_team(team)?;
 
     key.team_id = Some(team_id.to_string());
-    store.update_key(key).map_err(|e| TeamError::Store(e))?;
+    store.update_key(key).map_err(TeamError::Store)?;
 
     tracing::info!(team_id = %team_id, key_id = %key_id, "member added to team");
     Ok(())
@@ -86,7 +86,7 @@ pub fn remove_member(store: &dyn AdminStore, team_id: &str, key_id: &str) -> Res
     // Clear the key's team_id if the key still exists.
     if let Some(mut key) = store.get_key_by_id(key_id)? {
         key.team_id = None;
-        store.update_key(key).map_err(|e| TeamError::Store(e))?;
+        store.update_key(key).map_err(TeamError::Store)?;
     }
 
     tracing::info!(team_id = %team_id, key_id = %key_id, "member removed from team");

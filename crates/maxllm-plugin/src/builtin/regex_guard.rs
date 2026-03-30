@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_config_redact_postCall() {
+    fn test_from_config_redact_post_call() {
         let mut config = make_rules_config(vec![("test", r"secret\d+")]);
         config.insert("action".into(), "redact".into());
         config.insert("mode".into(), "post_call".into());

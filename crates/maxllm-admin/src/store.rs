@@ -332,7 +332,7 @@ impl AdminStore for InMemoryStore {
         let iter = logs.iter().rev(); // newest first
         let filtered: Vec<RequestLog> = iter
             .filter(|r| {
-                provider.map_or(true, |p| r.provider == p) && model.map_or(true, |m| r.model == m)
+                provider.is_none_or(|p| r.provider == p) && model.is_none_or(|m| r.model == m)
             })
             .take(limit)
             .cloned()

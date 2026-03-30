@@ -31,6 +31,12 @@ pub struct CohereToOpenAIStream {
     model: String,
 }
 
+impl Default for CohereToOpenAIStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CohereToOpenAIStream {
     pub fn new() -> Self {
         let created = SystemTime::now()
@@ -55,8 +61,8 @@ impl CohereToOpenAIStream {
                 event_type = et.trim().to_string();
             } else if let Some(d) = line.strip_prefix("data: ") {
                 data_line = d.to_string();
-            } else if line.starts_with("data:") {
-                data_line = line[5..].to_string();
+            } else if let Some(d) = line.strip_prefix("data:") {
+                data_line = d.to_string();
             }
         }
 

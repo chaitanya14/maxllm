@@ -34,8 +34,8 @@ pub async fn list(url: &str, admin_key: &str) -> i32 {
                                     println!("No virtual keys found.");
                                 } else {
                                     println!(
-                                        "{:<38} {:<20} {:<15} {}",
-                                        "ID", "NAME", "PREFIX", "ACTIVE"
+                                        "{:<38} {:<20} {:<15} ACTIVE",
+                                        "ID", "NAME", "PREFIX"
                                     );
                                     println!("{}", "-".repeat(85));
                                     for key in keys {
