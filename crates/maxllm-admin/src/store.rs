@@ -58,6 +58,15 @@ pub trait AdminStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<SpendRecord>, StoreError>;
     fn get_spend_summary(&self, key_id: Option<&str>) -> Result<SpendReport, StoreError>;
+
+    // -- Request logs -------------------------------------------------------
+    fn record_request_log(&self, log: RequestLog) -> Result<(), StoreError>;
+    fn get_request_logs(
+        &self,
+        limit: usize,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Vec<RequestLog>, StoreError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +86,8 @@ pub struct InMemoryStore {
     teams: RwLock<HashMap<String, Team>>,
     /// Spend records stored in insertion order.
     spend_logs: RwLock<Vec<SpendRecord>>,
+    /// Request logs stored in insertion order.
+    request_logs: RwLock<Vec<RequestLog>>,
 }
 
 impl InMemoryStore {
@@ -86,6 +97,7 @@ impl InMemoryStore {
             hash_index: RwLock::new(HashMap::new()),
             teams: RwLock::new(HashMap::new()),
             spend_logs: RwLock::new(Vec::new()),
+            request_logs: RwLock::new(Vec::new()),
         }
     }
 }
@@ -268,6 +280,33 @@ impl AdminStore for InMemoryStore {
             by_provider: collect(by_provider),
             by_key: collect(by_key),
         })
+    }
+
+    // -- Request logs -------------------------------------------------------
+
+    fn record_request_log(&self, log: RequestLog) -> Result<(), StoreError> {
+        let mut logs = self.request_logs.write().map_err(|_| StoreError::LockPoisoned)?;
+        logs.push(log);
+        Ok(())
+    }
+
+    fn get_request_logs(
+        &self,
+        limit: usize,
+        provider: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Vec<RequestLog>, StoreError> {
+        let logs = self.request_logs.read().map_err(|_| StoreError::LockPoisoned)?;
+        let iter = logs.iter().rev(); // newest first
+        let filtered: Vec<RequestLog> = iter
+            .filter(|r| {
+                provider.map_or(true, |p| r.provider == p)
+                    && model.map_or(true, |m| r.model == m)
+            })
+            .take(limit)
+            .cloned()
+            .collect();
+        Ok(filtered)
     }
 }
 

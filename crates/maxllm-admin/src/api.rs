@@ -130,11 +130,19 @@ impl AdminApi {
             ("GET", "/admin/spend/logs") => self.handle_spend_logs(),
             ("GET", "/admin/spend/report") => self.handle_spend_report(),
 
+            // -- Request logs -----------------------------------------------
+            ("GET", "/admin/logs") => self.handle_request_logs(),
+
             // -- Model costs ------------------------------------------------
             ("GET", "/admin/models/costs") => self.handle_model_costs(),
 
             _ => ApiResponse::error(404, "not found"),
         }
+    }
+
+    /// Record a request log entry (called from the gateway logging hook).
+    pub fn record_log(&self, log: RequestLog) -> Result<(), crate::store::StoreError> {
+        self.store.record_request_log(log)
     }
 
     // -- Key handlers -------------------------------------------------------
@@ -223,6 +231,15 @@ impl AdminApi {
     fn handle_spend_report(&self) -> ApiResponse {
         match self.store.get_spend_summary(None) {
             Ok(report) => ApiResponse::json(200, &report),
+            Err(e) => ApiResponse::error(500, &e.to_string()),
+        }
+    }
+
+    // -- Request log handlers -----------------------------------------------
+
+    fn handle_request_logs(&self) -> ApiResponse {
+        match self.store.get_request_logs(100, None, None) {
+            Ok(logs) => ApiResponse::json(200, &logs),
             Err(e) => ApiResponse::error(500, &e.to_string()),
         }
     }

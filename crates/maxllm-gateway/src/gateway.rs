@@ -27,6 +27,62 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+/// Well-known models for each provider kind.
+fn well_known_models(kind: ProviderKind) -> &'static [&'static str] {
+    match kind {
+        ProviderKind::OpenAI => &[
+            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
+            "o1", "o1-mini", "o1-preview", "o3-mini",
+        ],
+        ProviderKind::Anthropic => &[
+            "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022", "claude-3-opus-20240229",
+        ],
+        ProviderKind::Gemini => &[
+            "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
+            "gemini-1.5-pro", "gemini-1.5-flash",
+        ],
+        ProviderKind::AzureOpenai => &["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+        ProviderKind::Bedrock => &[
+            "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "anthropic.claude-3-haiku-20240307-v1:0",
+        ],
+        ProviderKind::Groq => &[
+            "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768",
+        ],
+        ProviderKind::Together => &["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+        ProviderKind::Fireworks => &["accounts/fireworks/models/llama-v3p3-70b-instruct"],
+        ProviderKind::DeepInfra => &["meta-llama/Llama-3.3-70B-Instruct"],
+        ProviderKind::Mistral => &["mistral-large-latest", "mistral-small-latest", "open-mistral-nemo"],
+        ProviderKind::XAI => &["grok-2", "grok-2-mini"],
+        ProviderKind::DeepSeek => &["deepseek-chat", "deepseek-reasoner"],
+        ProviderKind::Ollama => &["llama3.2", "mistral", "codellama"],
+        ProviderKind::Cohere => &["command-r-plus", "command-r", "command-light"],
+        ProviderKind::OpenaiCompat => &[],
+    }
+}
+
+/// Map a provider kind to its "owned_by" value for the models endpoint.
+fn provider_owned_by(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::OpenAI => "openai",
+        ProviderKind::Anthropic => "anthropic",
+        ProviderKind::Gemini => "google",
+        ProviderKind::AzureOpenai => "azure-openai",
+        ProviderKind::Bedrock => "aws-bedrock",
+        ProviderKind::Groq => "groq",
+        ProviderKind::Together => "together",
+        ProviderKind::Fireworks => "fireworks",
+        ProviderKind::DeepInfra => "deepinfra",
+        ProviderKind::Mistral => "mistral",
+        ProviderKind::XAI => "xai",
+        ProviderKind::DeepSeek => "deepseek",
+        ProviderKind::Ollama => "ollama",
+        ProviderKind::Cohere => "cohere",
+        ProviderKind::OpenaiCompat => "custom",
+    }
+}
+
 /// Runtime state for a configured provider.
 pub struct ProviderState {
     pub kind: ProviderKind,
@@ -42,212 +98,351 @@ pub struct ProviderState {
     pub default_model: Option<String>,
 }
 
-/// The main AI gateway — implements Pingora's ProxyHttp trait.
-pub struct AiGateway {
+/// Hot-reloadable state — swapped atomically on config change.
+pub struct HotState {
     pub providers: AHashMap<String, Arc<ProviderState>>,
     pub routes: Vec<RouteConfig>,
     pub metrics_enabled: bool,
-    /// Global plugin chain — runs on every request before route-specific plugins.
     pub global_chain: PluginChain,
-    /// Per-route plugin chains, indexed by route index.
     pub route_chains: Vec<PluginChain>,
-    /// Model aliases: map requested model to actual model.
     pub model_aliases: HashMap<String, String>,
-    /// Cost calculator for per-request cost tracking.
     pub cost_calculator: Arc<maxllm_admin::CostCalculator>,
+    pub guardrail_engine: Option<Arc<GuardrailEngine>>,
+    pub models_response: Bytes,
+}
+
+/// The main AI gateway — implements Pingora's ProxyHttp trait.
+pub struct AiGateway {
+    /// Hot-reloadable state, atomically swappable via ArcSwap.
+    /// Wrapped in Arc so a clone can be shared with the file watcher thread.
+    pub hot: Arc<arc_swap::ArcSwap<HotState>>,
     /// Budget enforcer for per-key budget tracking.
     pub budget_enforcer: Option<Arc<maxllm_admin::BudgetEnforcer>>,
-    /// Guardrail engine for content-level inspection.
-    pub guardrail_engine: Option<Arc<GuardrailEngine>>,
+    /// Admin API handler (None if admin not configured).
+    pub admin_api: Option<Arc<maxllm_admin::AdminApi>>,
+}
+
+/// Build the hot-reloadable state from a config.
+/// Extracted so it can be called both at startup and on reload.
+pub fn build_hot_state(config: &Config) -> Result<HotState, Box<dyn std::error::Error>> {
+    let mut providers = AHashMap::new();
+
+    for (name, conf) in &config.providers {
+        let translator: Box<dyn ProviderTranslator> = match conf.kind {
+            ProviderKind::OpenAI => {
+                Box::new(maxllm_translate::openai::OpenAITranslator)
+            }
+            ProviderKind::Anthropic => {
+                Box::new(maxllm_translate::anthropic::AnthropicTranslator)
+            }
+            ProviderKind::Gemini => {
+                Box::new(maxllm_translate::gemini::GeminiTranslator::new())
+            }
+            ProviderKind::AzureOpenai => {
+                let deployment = conf.deployment.as_deref().unwrap_or("gpt-4o");
+                let api_version = conf.api_version.as_deref().unwrap_or("2024-02-01");
+                Box::new(maxllm_translate::azure_openai::AzureOpenAITranslator::new(
+                    deployment, api_version,
+                ))
+            }
+            ProviderKind::Bedrock => {
+                Box::new(maxllm_translate::bedrock::BedrockTranslator::new())
+            }
+            ProviderKind::Groq => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::groq())
+            }
+            ProviderKind::Together => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::together())
+            }
+            ProviderKind::Fireworks => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::fireworks())
+            }
+            ProviderKind::DeepInfra => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::deepinfra())
+            }
+            ProviderKind::Mistral => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::mistral())
+            }
+            ProviderKind::XAI => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::xai())
+            }
+            ProviderKind::DeepSeek => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::deepseek())
+            }
+            ProviderKind::Ollama => {
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::ollama())
+            }
+            ProviderKind::Cohere => {
+                Box::new(maxllm_translate::cohere::CohereTranslator)
+            }
+            ProviderKind::OpenaiCompat => {
+                let path = conf.upstream_path.as_deref().unwrap_or("/v1/chat/completions");
+                Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::new(
+                    name.clone(),
+                    path.to_string(),
+                    maxllm_translate::openai_compat::AuthStyle::Bearer,
+                ))
+            }
+        };
+
+        let url: url::Url = conf.base_url.parse().map_err(|e: url::ParseError| {
+            format!("invalid base_url for provider '{}': {}", name, e)
+        })?;
+
+        let tls = url.scheme() == "https";
+        let host = url.host_str().unwrap_or("localhost").to_string();
+        let port = url.port().unwrap_or(if tls { 443 } else { 80 });
+
+        providers.insert(
+            name.clone(),
+            Arc::new(ProviderState {
+                kind: conf.kind,
+                translator,
+                circuit_breaker: CircuitBreaker::new(conf.max_fails, conf.fail_timeout_secs),
+                api_key: conf.api_key.clone(),
+                host: host.clone(),
+                port,
+                tls,
+                sni: host,
+                weight: conf.weight,
+                tags: conf.tags.clone(),
+                default_model: conf.default_model.clone(),
+            }),
+        );
+    }
+
+    // Build plugin instances from config
+    let mut plugin_instances: AHashMap<String, Arc<dyn Plugin>> = AHashMap::new();
+    for (name, plugin_conf) in &config.plugins {
+        let mut full_config = plugin_conf.params.clone();
+        full_config.insert(
+            "category".into(),
+            toml::Value::String(plugin_conf.category.clone()),
+        );
+        let plugin = maxllm_plugin::create_plugin(name, &full_config)
+            .map_err(|e| format!("failed to create plugin '{name}': {e}"))?;
+        plugin_instances.insert(name.clone(), plugin);
+    }
+
+    // Build global plugin chain
+    let global_plugins: Vec<Arc<dyn Plugin>> = config
+        .global_plugins
+        .iter()
+        .filter_map(|name| plugin_instances.get(name).cloned())
+        .collect();
+    let global_chain = PluginChain::new(global_plugins);
+
+    // Build per-route plugin chains
+    let route_chains: Vec<PluginChain> = config
+        .routes
+        .iter()
+        .map(|route| {
+            let route_plugins: Vec<Arc<dyn Plugin>> = route
+                .plugins
+                .iter()
+                .filter_map(|name| plugin_instances.get(name).cloned())
+                .collect();
+            PluginChain::new(route_plugins)
+        })
+        .collect();
+
+    // Initialize cost calculator with config overrides
+    let mut cost_calculator = maxllm_admin::CostCalculator::new();
+    for (model, cost_conf) in &config.model_costs {
+        cost_calculator.add_cost(maxllm_admin::ModelCost {
+            model_pattern: model.clone(),
+            input_cost_per_1m: cost_conf.input_per_1m,
+            output_cost_per_1m: cost_conf.output_per_1m,
+        });
+    }
+    let cost_calculator = Arc::new(cost_calculator);
+
+    // Build guardrail engine from config
+    let guardrail_engine = if config.guardrails.is_empty() {
+        None
+    } else {
+        let engine = guardrail::build_engine(&config.guardrails)
+            .map_err(|e| format!("failed to build guardrail engine: {e}"))?;
+        Some(Arc::new(engine))
+    };
+
+    // Build the /v1/models response
+    let models_response = {
+        let mut seen = std::collections::HashSet::new();
+        let mut models = Vec::new();
+        let created = 0_u64;
+
+        for (_, provider) in &providers {
+            let owned_by = provider_owned_by(provider.kind);
+
+            if let Some(ref dm) = provider.default_model {
+                if seen.insert(dm.clone()) {
+                    models.push(serde_json::json!({
+                        "id": dm,
+                        "object": "model",
+                        "created": created,
+                        "owned_by": owned_by,
+                    }));
+                }
+            }
+
+            for &model_id in well_known_models(provider.kind) {
+                if seen.insert(model_id.to_string()) {
+                    models.push(serde_json::json!({
+                        "id": model_id,
+                        "object": "model",
+                        "created": created,
+                        "owned_by": owned_by,
+                    }));
+                }
+            }
+        }
+
+        for (alias, _target) in &config.model_aliases {
+            if seen.insert(alias.clone()) {
+                models.push(serde_json::json!({
+                    "id": alias,
+                    "object": "model",
+                    "created": created,
+                    "owned_by": "maxllm-alias",
+                }));
+            }
+        }
+
+        let response = serde_json::json!({
+            "object": "list",
+            "data": models,
+        });
+        Bytes::from(serde_json::to_vec(&response).expect("serialize models"))
+    };
+
+    info!(
+        global_plugins = config.global_plugins.len(),
+        total_plugins = plugin_instances.len(),
+        providers = providers.len(),
+        routes = config.routes.len(),
+        model_aliases = config.model_aliases.len(),
+        guardrails = config.guardrails.len(),
+        "Hot state built"
+    );
+
+    Ok(HotState {
+        providers,
+        routes: config.routes.clone(),
+        metrics_enabled: config.metrics.enabled,
+        global_chain,
+        route_chains,
+        model_aliases: config.model_aliases.clone(),
+        cost_calculator,
+        guardrail_engine,
+        models_response,
+    })
 }
 
 impl AiGateway {
     pub fn new(config: &Config) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut providers = AHashMap::new();
+        let hot_state = build_hot_state(config)?;
 
-        for (name, conf) in &config.providers {
-            let translator: Box<dyn ProviderTranslator> = match conf.kind {
-                ProviderKind::OpenAI => {
-                    Box::new(maxllm_translate::openai::OpenAITranslator)
-                }
-                ProviderKind::Anthropic => {
-                    Box::new(maxllm_translate::anthropic::AnthropicTranslator)
-                }
-                ProviderKind::Gemini => {
-                    Box::new(maxllm_translate::gemini::GeminiTranslator::new())
-                }
-                ProviderKind::AzureOpenai => {
-                    let deployment = conf.deployment.as_deref().unwrap_or("gpt-4o");
-                    let api_version = conf.api_version.as_deref().unwrap_or("2024-02-01");
-                    Box::new(maxllm_translate::azure_openai::AzureOpenAITranslator::new(
-                        deployment, api_version,
-                    ))
-                }
-                ProviderKind::Bedrock => {
-                    Box::new(maxllm_translate::bedrock::BedrockTranslator::new())
-                }
-                ProviderKind::Groq => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::groq())
-                }
-                ProviderKind::Together => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::together())
-                }
-                ProviderKind::Fireworks => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::fireworks())
-                }
-                ProviderKind::DeepInfra => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::deepinfra())
-                }
-                ProviderKind::Mistral => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::mistral())
-                }
-                ProviderKind::XAI => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::xai())
-                }
-                ProviderKind::DeepSeek => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::deepseek())
-                }
-                ProviderKind::Ollama => {
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::ollama())
-                }
-                ProviderKind::Cohere => {
-                    Box::new(maxllm_translate::cohere::CohereTranslator)
-                }
-                ProviderKind::OpenaiCompat => {
-                    let path = conf.upstream_path.as_deref().unwrap_or("/v1/chat/completions");
-                    Box::new(maxllm_translate::openai_compat::OpenAICompatTranslator::new(
-                        name.clone(),
-                        path.to_string(),
-                        maxllm_translate::openai_compat::AuthStyle::Bearer,
-                    ))
-                }
-            };
-
-            let url: url::Url = conf.base_url.parse().map_err(|e: url::ParseError| {
-                format!("invalid base_url for provider '{}': {}", name, e)
-            })?;
-
-            let tls = url.scheme() == "https";
-            let host = url.host_str().unwrap_or("localhost").to_string();
-            let port = url.port().unwrap_or(if tls { 443 } else { 80 });
-
-            providers.insert(
-                name.clone(),
-                Arc::new(ProviderState {
-                    kind: conf.kind,
-                    translator,
-                    circuit_breaker: CircuitBreaker::new(conf.max_fails, conf.fail_timeout_secs),
-                    api_key: conf.api_key.clone(),
-                    host: host.clone(),
-                    port,
-                    tls,
-                    sni: host,
-                    weight: conf.weight,
-                    tags: conf.tags.clone(),
-                    default_model: conf.default_model.clone(),
-                }),
-            );
-        }
-
-        // Build plugin instances from config
-        let mut plugin_instances: AHashMap<String, Arc<dyn Plugin>> = AHashMap::new();
-        for (name, plugin_conf) in &config.plugins {
-            let mut full_config = plugin_conf.params.clone();
-            full_config.insert(
-                "category".into(),
-                toml::Value::String(plugin_conf.category.clone()),
-            );
-            let plugin = maxllm_plugin::create_plugin(name, &full_config)
-                .map_err(|e| format!("failed to create plugin '{name}': {e}"))?;
-            plugin_instances.insert(name.clone(), plugin);
-        }
-
-        // Build global plugin chain
-        let global_plugins: Vec<Arc<dyn Plugin>> = config
-            .global_plugins
-            .iter()
-            .filter_map(|name| plugin_instances.get(name).cloned())
-            .collect();
-        let global_chain = PluginChain::new(global_plugins);
-
-        // Build per-route plugin chains
-        let route_chains: Vec<PluginChain> = config
-            .routes
-            .iter()
-            .map(|route| {
-                let route_plugins: Vec<Arc<dyn Plugin>> = route
-                    .plugins
-                    .iter()
-                    .filter_map(|name| plugin_instances.get(name).cloned())
-                    .collect();
-                PluginChain::new(route_plugins)
-            })
-            .collect();
-
-        // Initialize cost calculator with config overrides
-        let mut cost_calculator = maxllm_admin::CostCalculator::new();
-        for (model, cost_conf) in &config.model_costs {
-            cost_calculator.add_cost(maxllm_admin::ModelCost {
-                model_pattern: model.clone(),
-                input_cost_per_1m: cost_conf.input_per_1m,
-                output_cost_per_1m: cost_conf.output_per_1m,
-            });
-        }
-        let cost_calculator = Arc::new(cost_calculator);
-
-        // Build guardrail engine from config
-        let guardrail_engine = if config.guardrails.is_empty() {
-            None
+        // Initialize admin API if configured
+        let admin_api = if let Some(ref admin_config) = config.admin {
+            if admin_config.enabled {
+                let store: Arc<dyn maxllm_admin::AdminStore> =
+                    if let Some(ref db_path) = admin_config.db_path {
+                        let path = std::path::Path::new(db_path);
+                        Arc::new(
+                            maxllm_admin::SqliteStore::open(path)
+                                .map_err(|e| format!("failed to open admin SQLite DB: {e}"))?,
+                        )
+                    } else {
+                        Arc::new(maxllm_admin::InMemoryStore::new())
+                    };
+                let api = maxllm_admin::AdminApi::new(
+                    store,
+                    Arc::clone(&hot_state.cost_calculator),
+                    &admin_config.master_key,
+                );
+                info!(
+                    db = admin_config.db_path.as_deref().unwrap_or("in-memory"),
+                    "Admin API initialized"
+                );
+                Some(Arc::new(api))
+            } else {
+                None
+            }
         } else {
-            let engine = guardrail::build_engine(&config.guardrails)
-                .map_err(|e| format!("failed to build guardrail engine: {e}"))?;
-            info!(
-                guardrails = config.guardrails.len(),
-                "Guardrail engine initialized"
-            );
-            Some(Arc::new(engine))
+            None
         };
 
-        info!(
-            global_plugins = config.global_plugins.len(),
-            total_plugins = plugin_instances.len(),
-            providers = providers.len(),
-            routes = config.routes.len(),
-            model_aliases = config.model_aliases.len(),
-            guardrails = config.guardrails.len(),
-            "Gateway initialized"
-        );
-
         Ok(Self {
-            providers,
-            routes: config.routes.clone(),
-            metrics_enabled: config.metrics.enabled,
-            global_chain,
-            route_chains,
-            model_aliases: config.model_aliases.clone(),
-            cost_calculator,
+            hot: Arc::new(arc_swap::ArcSwap::from_pointee(hot_state)),
             budget_enforcer: None,
-            guardrail_engine,
+            admin_api,
         })
     }
 
+    /// Reload the hot-reloadable state from a new config.
+    /// Returns a summary of what changed.
+    pub fn reload(&self, config: &Config) -> Result<String, Box<dyn std::error::Error>> {
+        let old = self.hot.load();
+        let new_state = build_hot_state(config)?;
+
+        // Build a summary of changes
+        let mut changes = Vec::new();
+        if old.providers.len() != new_state.providers.len() {
+            changes.push(format!(
+                "providers: {} -> {}",
+                old.providers.len(),
+                new_state.providers.len()
+            ));
+        }
+        if old.routes.len() != new_state.routes.len() {
+            changes.push(format!(
+                "routes: {} -> {}",
+                old.routes.len(),
+                new_state.routes.len()
+            ));
+        }
+        if old.model_aliases.len() != new_state.model_aliases.len() {
+            changes.push(format!(
+                "model_aliases: {} -> {}",
+                old.model_aliases.len(),
+                new_state.model_aliases.len()
+            ));
+        }
+        if old.metrics_enabled != new_state.metrics_enabled {
+            changes.push(format!(
+                "metrics: {} -> {}",
+                old.metrics_enabled, new_state.metrics_enabled
+            ));
+        }
+
+        let summary = if changes.is_empty() {
+            "config reloaded (no structural changes detected)".to_string()
+        } else {
+            format!("config reloaded: {}", changes.join(", "))
+        };
+
+        self.hot.store(Arc::new(new_state));
+        Ok(summary)
+    }
+
     /// Find matching route by path prefix.
-    fn match_route(&self, path: &str) -> Option<usize> {
-        self.routes
+    fn match_route(hot: &HotState, path: &str) -> Option<usize> {
+        hot.routes
             .iter()
             .position(|r| path.starts_with(&r.path))
     }
 
     /// Select provider using the route's configured strategy.
     fn select_provider(
-        &self,
+        hot: &HotState,
         route: &RouteConfig,
         ctx: &mut RequestCtx,
     ) -> Option<Arc<ProviderState>> {
         // Build list of all candidate providers for this route
         let mut candidates: Vec<ProviderTarget> = Vec::new();
 
-        if let Some(provider) = self.providers.get(&route.provider) {
+        if let Some(provider) = hot.providers.get(&route.provider) {
             candidates.push(ProviderTarget {
                 name: route.provider.clone(),
                 state: Arc::clone(provider),
@@ -256,7 +451,7 @@ impl AiGateway {
         }
 
         for fb_name in &route.fallback {
-            if let Some(provider) = self.providers.get(fb_name) {
+            if let Some(provider) = hot.providers.get(fb_name) {
                 candidates.push(ProviderTarget {
                     name: fb_name.clone(),
                     state: Arc::clone(provider),
@@ -284,8 +479,8 @@ impl AiGateway {
     }
 
     /// Resolve model aliases.
-    fn resolve_model_alias(&self, model: &str) -> String {
-        self.model_aliases
+    fn resolve_model_alias(hot: &HotState, model: &str) -> String {
+        hot.model_aliases
             .get(model)
             .cloned()
             .unwrap_or_else(|| model.to_string())
@@ -353,10 +548,30 @@ impl ProxyHttp for AiGateway {
             return Ok(true);
         }
 
+        // Load hot state snapshot for this request
+        let hot = self.hot.load();
+
+        // /v1/models endpoint — OpenAI-compatible model list (fast path)
+        if path == "/v1/models" {
+            let body_bytes = hot.models_response.clone();
+            let content_len = body_bytes.len().to_string();
+            let mut resp = ResponseHeader::build(200, Some(2))?;
+            resp.insert_header("Content-Type", "application/json")?;
+            resp.insert_header("Content-Length", &content_len)?;
+            session
+                .write_response_header(Box::new(resp), false)
+                .await?;
+            session
+                .write_response_body(Some(body_bytes), true)
+                .await?;
+            ctx.skip_logging = true;
+            return Ok(true);
+        }
+
         METRICS.active_requests.inc();
 
         // Metrics endpoint (bypasses plugins)
-        if path == "/metrics" && self.metrics_enabled {
+        if path == "/metrics" && hot.metrics_enabled {
             let body = METRICS.encode();
             let content_len = body.len().to_string();
             let mut resp = ResponseHeader::build(200, Some(2))?;
@@ -376,6 +591,21 @@ impl ProxyHttp for AiGateway {
         // Own the path for later use (after the borrow above is done)
         let path = path.to_string();
 
+        // Reject non-POST methods on API routes (health/metrics/models already handled above)
+        let method = session.req_header().method.clone();
+        if method != http::method::Method::POST
+            && !path.starts_with("/admin/")
+            && path != "/v1/models"
+        {
+            METRICS.active_requests.dec();
+            return Self::send_error_response(
+                session,
+                405,
+                &format!("Method {} not allowed. Use POST.", method),
+            )
+            .await;
+        }
+
         // Admin API endpoints
         if path.starts_with("/admin/") {
             return self.handle_admin_request(session, &path).await;
@@ -389,14 +619,14 @@ impl ProxyHttp for AiGateway {
         }
 
         // Run global plugin chain (auth, request_id, ip_restriction, etc.)
-        if let Some(resp) = self.global_chain.run_request(session, &mut ctx.plugin_ctx).await? {
+        if let Some(resp) = hot.global_chain.run_request(session, &mut ctx.plugin_ctx).await? {
             METRICS.active_requests.dec();
             resp.send(session).await?;
             return Ok(true);
         }
 
         // Route matching
-        let route_index = match self.match_route(&path) {
+        let route_index = match Self::match_route(&hot, &path) {
             Some(idx) => idx,
             None => {
                 METRICS.active_requests.dec();
@@ -410,8 +640,8 @@ impl ProxyHttp for AiGateway {
         };
 
         ctx.route_index = Some(route_index);
-        ctx.plugin_ctx.route_path = self.routes[route_index].path.clone();
-        let route = &self.routes[route_index];
+        ctx.plugin_ctx.route_path = hot.routes[route_index].path.clone();
+        let route = &hot.routes[route_index];
         ctx.endpoint_type = route.endpoint_type;
 
         // For passthrough, extract the path suffix after the route prefix
@@ -432,7 +662,7 @@ impl ProxyHttp for AiGateway {
         }
 
         // Run route-specific plugin chain (rate_limit, cors, etc.)
-        if let Some(resp) = self.route_chains[route_index]
+        if let Some(resp) = hot.route_chains[route_index]
             .run_request(session, &mut ctx.plugin_ctx)
             .await?
         {
@@ -442,7 +672,7 @@ impl ProxyHttp for AiGateway {
         }
 
         // Select provider (with circuit breaker check and routing strategy)
-        let _provider = match self.select_provider(route, ctx) {
+        let _provider = match Self::select_provider(&hot, route, ctx) {
             Some(p) => p,
             None => {
                 METRICS.active_requests.dec();
@@ -466,10 +696,17 @@ impl ProxyHttp for AiGateway {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let provider = self
-            .providers
-            .get(&ctx.provider_name)
-            .expect("provider must exist after request_filter");
+        let hot = self.hot.load();
+        let provider = match hot.providers.get(&ctx.provider_name) {
+            Some(p) => p,
+            None => {
+                warn!(provider = %ctx.provider_name, "provider not found in upstream_peer (config may have been reloaded)");
+                return Err(pingora::Error::explain(
+                    pingora::ErrorType::HTTPStatus(502),
+                    format!("provider '{}' no longer exists", ctx.provider_name),
+                ));
+            }
+        };
 
         let mut peer = HttpPeer::new(
             (&*provider.host, provider.port),
@@ -489,10 +726,17 @@ impl ProxyHttp for AiGateway {
         upstream_request: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
-        let provider = self
-            .providers
-            .get(&ctx.provider_name)
-            .expect("provider must exist");
+        let hot = self.hot.load();
+        let provider = match hot.providers.get(&ctx.provider_name) {
+            Some(p) => p,
+            None => {
+                warn!(provider = %ctx.provider_name, "provider not found in upstream_request_filter (config may have been reloaded)");
+                return Err(pingora::Error::explain(
+                    pingora::ErrorType::HTTPStatus(502),
+                    format!("provider '{}' no longer exists", ctx.provider_name),
+                ));
+            }
+        };
 
         // Set upstream path based on endpoint type
         let path = match ctx.endpoint_type {
@@ -510,10 +754,28 @@ impl ProxyHttp for AiGateway {
                     original
                 }
             }
+            EndpointType::Embeddings => {
+                // Embeddings endpoint: use the embeddings path for each provider
+                if provider.kind == ProviderKind::Gemini {
+                    let model = provider.default_model.as_deref().unwrap_or("text-embedding-004");
+                    format!(
+                        "/v1beta/models/{}:embedContent?key={}",
+                        model, provider.api_key
+                    )
+                } else if provider.kind == ProviderKind::Cohere {
+                    "/v2/embed".to_string()
+                } else {
+                    // OpenAI and OpenAI-compatible providers
+                    "/v1/embeddings".to_string()
+                }
+            }
             _ => {
-                // Normal: use translator's upstream path
+                // Normal (chat completions): use translator's upstream path
                 if provider.kind == ProviderKind::Gemini {
                     let model = provider.default_model.as_deref().unwrap_or("gemini-2.5-flash");
+                    // Always use generateContent (non-streaming endpoint).
+                    // If client requested streaming, the gateway will convert
+                    // the JSON response to SSE in upstream_response_body_filter.
                     format!(
                         "/v1beta/models/{}:generateContent?key={}",
                         model, provider.api_key
@@ -528,6 +790,13 @@ impl ProxyHttp for AiGateway {
         // Remove downstream auth header — providers use their own auth
         let _ = upstream_request.remove_header("Authorization");
 
+        // Remove Accept-Encoding to prevent upstream from gzip-compressing the response.
+        // The gateway needs raw bytes to translate provider responses (e.g. Gemini → OpenAI).
+        // Without this, compressed responses skip translation and leak native format to clients.
+        if ctx.endpoint_type != EndpointType::Passthrough {
+            let _ = upstream_request.remove_header("Accept-Encoding");
+        }
+
         // Set provider-specific headers
         for (key, value) in provider.translator.upstream_headers(&provider.api_key) {
             upstream_request.insert_header(key, &value)?;
@@ -536,21 +805,34 @@ impl ProxyHttp for AiGateway {
         // Set Host header
         upstream_request.insert_header("Host", &provider.host)?;
 
-        // For passthrough, preserve original Content-Length (no body mutation).
-        // For normal/native, remove it since body may be translated or re-serialized.
+        // Body framing strategy:
+        // - Passthrough endpoints: keep original Content-Length (body forwarded as-is)
+        // - OpenAI/Azure (body-passthrough translators): keep original Content-Length
+        //   because OpenAI/Cloudflare REJECTS Transfer-Encoding: chunked with 400.
+        //   The body flows through request_body_filter without modification.
+        // - Other translators (Gemini, Anthropic, etc.): remove Content-Length
+        //   and use chunked encoding since body size changes after translation.
         if ctx.endpoint_type == EndpointType::Passthrough {
-            // Keep original Content-Length and don't set chunked encoding
+            // Keep original Content-Length
         } else {
-            let _ = upstream_request.remove_header("Content-Length");
-            upstream_request.insert_header("Transfer-Encoding", "chunked")?;
+            let is_body_passthrough = provider.translator.name() == "openai"
+                || provider.translator.name() == "azure_openai";
+            if is_body_passthrough {
+                // Mark as body-passthrough so request_body_filter lets chunks flow
+                ctx.keep_request_content_length = true;
+                // Keep original Content-Length header (don't remove, don't set chunked)
+            } else {
+                let _ = upstream_request.remove_header("Content-Length");
+                upstream_request.insert_header("Transfer-Encoding", "chunked")?;
+            }
         }
 
         // Run plugin chains on upstream request
-        self.global_chain
+        hot.global_chain
             .run_upstream_request(session, upstream_request, &mut ctx.plugin_ctx)
             .await?;
         if let Some(idx) = ctx.route_index {
-            self.route_chains[idx]
+            hot.route_chains[idx]
                 .run_upstream_request(session, upstream_request, &mut ctx.plugin_ctx)
                 .await?;
         }
@@ -573,6 +855,69 @@ impl ProxyHttp for AiGateway {
             return Ok(());
         }
 
+        // ── OPENAI PASSTHROUGH: forward body as-is but extract metadata ──
+        // For OpenAI/Azure providers, the body isn't translated, so we forward
+        // chunks immediately to preserve Content-Length framing. We buffer a
+        // copy to extract model/streaming info on end_of_stream.
+        if ctx.keep_request_content_length {
+            // Buffer a copy for metadata extraction, but DON'T take the body —
+            // let it flow through to upstream unchanged.
+            if let Some(ref data) = body {
+                ctx.request_body_buf.extend_from_slice(data);
+            }
+            if end_of_stream && !ctx.body_translated {
+                ctx.body_translated = true;
+                let hot = self.hot.load();
+                if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf) {
+                    if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
+                        let resolved = Self::resolve_model_alias(&hot, model);
+                        ctx.model = resolved.clone();
+                        ctx.plugin_ctx.model = resolved;
+                    }
+                    if let Some(stream) = parsed.get("stream").and_then(|v| v.as_bool()) {
+                        ctx.is_streaming = stream;
+                        if stream {
+                            // Set up streaming passthrough (OpenAI SSE → client)
+                            let provider = hot.providers.get(&ctx.provider_name);
+                            if let Some(p) = provider {
+                                match ctx.stream_translator.lock() {
+                                Ok(mut guard) => {
+                                    *guard = Some(p.translator.streaming_translator());
+                                }
+                                Err(e) => {
+                                    warn!("stream_translator mutex poisoned: {e}");
+                                }
+                            }
+                            }
+                        }
+                    }
+                }
+                // Free the metadata buffer (not needed anymore)
+                ctx.request_body_buf = Vec::new();
+            }
+            return Ok(());
+        }
+
+        // ── EMBEDDINGS: forward as-is for OpenAI-compatible, extract model ──
+        if ctx.endpoint_type == EndpointType::Embeddings {
+            if let Some(data) = body.take() {
+                ctx.request_body_buf.extend_from_slice(&data);
+            }
+            if end_of_stream && !ctx.body_translated {
+                ctx.body_translated = true;
+                let hot = self.hot.load();
+                if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf) {
+                    if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
+                        let resolved = Self::resolve_model_alias(&hot, model);
+                        ctx.model = resolved.clone();
+                        ctx.plugin_ctx.model = resolved;
+                    }
+                }
+                *body = Some(Bytes::from(std::mem::take(&mut ctx.request_body_buf)));
+            }
+            return Ok(());
+        }
+
         // Buffer incoming body chunks (both normal and native modes)
         if let Some(data) = body.take() {
             ctx.request_body_buf.extend_from_slice(&data);
@@ -581,10 +926,17 @@ impl ProxyHttp for AiGateway {
         if end_of_stream && !ctx.body_translated {
             ctx.body_translated = true;
 
-            let provider = self
-                .providers
-                .get(&ctx.provider_name)
-                .expect("provider must exist");
+            let hot = self.hot.load();
+            let provider = match hot.providers.get(&ctx.provider_name) {
+                Some(p) => p,
+                None => {
+                    warn!(provider = %ctx.provider_name, "provider not found in request_body_filter (config may have been reloaded)");
+                    return Err(pingora::Error::explain(
+                        pingora::ErrorType::HTTPStatus(502),
+                        format!("provider '{}' no longer exists", ctx.provider_name),
+                    ));
+                }
+            };
 
             if ctx.endpoint_type == EndpointType::Native {
                 // ── NATIVE MODE: parse for metadata only, forward body as-is ──
@@ -597,7 +949,7 @@ impl ProxyHttp for AiGateway {
                     if let Some(model) =
                         maxllm_translate::extract_native_model(&provider_kind, parsed)
                     {
-                        let resolved = self.resolve_model_alias(&model);
+                        let resolved = Self::resolve_model_alias(&hot, &model);
                         ctx.model = resolved.clone();
                         ctx.plugin_ctx.model = resolved;
                     }
@@ -608,7 +960,7 @@ impl ProxyHttp for AiGateway {
                 }
 
                 // Run pre-call guardrails on native content
-                if let Some(ref engine) = self.guardrail_engine {
+                if let Some(ref engine) = hot.guardrail_engine {
                     if engine.has_pre_call() {
                         let provider_kind = format!("{:?}", provider.kind).to_lowercase();
                         let content = parsed
@@ -647,8 +999,14 @@ impl ProxyHttp for AiGateway {
 
                 // Set up native stream passthrough (passes chunks through unchanged)
                 if ctx.is_streaming {
-                    *ctx.stream_translator.lock().unwrap() =
-                        Some(Box::new(maxllm_translate::NativePassthroughStream));
+                    match ctx.stream_translator.lock() {
+                        Ok(mut guard) => {
+                            *guard = Some(Box::new(maxllm_translate::NativePassthroughStream));
+                        }
+                        Err(e) => {
+                            warn!("stream_translator mutex poisoned: {e}");
+                        }
+                    }
                 }
 
                 // Forward body as-is (no translation)
@@ -662,7 +1020,7 @@ impl ProxyHttp for AiGateway {
 
                 if let Some(ref parsed) = parsed {
                     if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
-                        let resolved = self.resolve_model_alias(model);
+                        let resolved = Self::resolve_model_alias(&hot, model);
                         ctx.model = resolved.clone();
                         ctx.plugin_ctx.model = resolved;
                     }
@@ -681,7 +1039,7 @@ impl ProxyHttp for AiGateway {
                 }
 
                 // Run pre-call guardrails on message content
-                if let Some(ref engine) = self.guardrail_engine {
+                if let Some(ref engine) = hot.guardrail_engine {
                     if engine.has_pre_call() {
                         let content = parsed
                             .as_ref()
@@ -788,8 +1146,14 @@ impl ProxyHttp for AiGateway {
                     Ok(translated) => {
                         if translated.is_streaming {
                             ctx.is_streaming = true;
-                            *ctx.stream_translator.lock().unwrap() =
-                                Some(provider.translator.streaming_translator());
+                            match ctx.stream_translator.lock() {
+                                Ok(mut guard) => {
+                                    *guard = Some(provider.translator.streaming_translator());
+                                }
+                                Err(e) => {
+                                    warn!("stream_translator mutex poisoned: {e}");
+                                }
+                            }
                         }
                         *body = Some(Bytes::from(translated.body));
                     }
@@ -811,8 +1175,10 @@ impl ProxyHttp for AiGateway {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
+        let hot = self.hot.load();
         let status = upstream_response.status.as_u16();
-        let provider = self.providers.get(&ctx.provider_name);
+        ctx.upstream_status = status;
+        let provider = hot.providers.get(&ctx.provider_name);
 
         // Record circuit breaker state
         if let Some(p) = provider {
@@ -827,8 +1193,24 @@ impl ProxyHttp for AiGateway {
         // Passthrough, native, and OpenAI providers keep the original Content-Length.
         let skip_response_translation = ctx.endpoint_type == EndpointType::Passthrough
             || ctx.endpoint_type == EndpointType::Native
+            || ctx.endpoint_type == EndpointType::Embeddings
             || provider.map_or(false, |p| p.translator.name() == "openai");
         if !skip_response_translation {
+            let _ = upstream_response.remove_header("Content-Length");
+        }
+
+        // For error responses from non-OpenAI providers, remove Content-Length
+        // since the body will be normalized to OpenAI error format.
+        if status >= 400 && !skip_response_translation {
+            let _ = upstream_response.remove_header("Content-Length");
+        }
+
+        // For Gemini streaming: we got a JSON response from generateContent
+        // but client wants SSE. Set the right content type.
+        let is_gemini_streaming = ctx.is_streaming
+            && provider.map_or(false, |p| p.kind == ProviderKind::Gemini);
+        if is_gemini_streaming {
+            upstream_response.insert_header("Content-Type", "text/event-stream")?;
             let _ = upstream_response.remove_header("Content-Length");
         }
 
@@ -860,11 +1242,11 @@ impl ProxyHttp for AiGateway {
         }
 
         // Run plugin chains on response
-        self.global_chain
+        hot.global_chain
             .run_response(session, upstream_response, &mut ctx.plugin_ctx)
             .await?;
         if let Some(idx) = ctx.route_index {
-            self.route_chains[idx]
+            hot.route_chains[idx]
                 .run_response(session, upstream_response, &mut ctx.plugin_ctx)
                 .await?;
         }
@@ -879,13 +1261,25 @@ impl ProxyHttp for AiGateway {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Option<std::time::Duration>> {
-        // ── PASSTHROUGH: zero processing ──
-        if ctx.endpoint_type == EndpointType::Passthrough {
+        let hot = self.hot.load();
+
+        // ── PASSTHROUGH and EMBEDDINGS: forward as-is, extract usage ──
+        if ctx.endpoint_type == EndpointType::Passthrough
+            || ctx.endpoint_type == EndpointType::Embeddings
+        {
+            // Extract usage from embeddings responses
+            if ctx.endpoint_type == EndpointType::Embeddings && end_of_stream {
+                if let Some(data) = body.as_ref() {
+                    if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(data) {
+                        extract_usage(&parsed, ctx);
+                    }
+                }
+            }
             // Still run plugin chains (logging, webhooks, etc.)
-            self.global_chain
+            hot.global_chain
                 .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
             if let Some(idx) = ctx.route_index {
-                self.route_chains[idx]
+                hot.route_chains[idx]
                     .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
             }
             return Ok(None);
@@ -896,11 +1290,17 @@ impl ProxyHttp for AiGateway {
             if ctx.is_streaming {
                 // Streaming: pass through (NativePassthroughStream just copies bytes)
                 if let Some(data) = body.as_ref() {
-                    let mut guard = ctx.stream_translator.lock().unwrap();
-                    if let Some(translator) = guard.as_mut() {
-                        let translated = translator.process_chunk(data, end_of_stream);
-                        drop(guard);
-                        *body = Some(Bytes::from(translated));
+                    match ctx.stream_translator.lock() {
+                        Ok(mut guard) => {
+                            if let Some(translator) = guard.as_mut() {
+                                let translated = translator.process_chunk(data, end_of_stream);
+                                drop(guard);
+                                *body = Some(Bytes::from(translated));
+                            }
+                        }
+                        Err(e) => {
+                            warn!("stream_translator mutex poisoned in native streaming: {e}");
+                        }
                     }
                 }
             } else {
@@ -916,9 +1316,9 @@ impl ProxyHttp for AiGateway {
                         extract_usage(&parsed, ctx);
 
                         // Run post-call guardrails on native response content
-                        if let Some(ref engine) = self.guardrail_engine {
+                        if let Some(ref engine) = hot.guardrail_engine {
                             if engine.has_post_call() {
-                                let provider = self.providers.get(&ctx.provider_name);
+                                let provider = hot.providers.get(&ctx.provider_name);
                                 let provider_kind = provider
                                     .map(|p| format!("{:?}", p.kind).to_lowercase())
                                     .unwrap_or_default();
@@ -959,14 +1359,14 @@ impl ProxyHttp for AiGateway {
                                             error_body.to_string().into_bytes(),
                                         ));
                                         // Skip forwarding the original body
-                                        self.global_chain.run_response_body(
+                                        hot.global_chain.run_response_body(
                                             session,
                                             body,
                                             end_of_stream,
                                             &mut ctx.plugin_ctx,
                                         )?;
                                         if let Some(idx) = ctx.route_index {
-                                            self.route_chains[idx].run_response_body(
+                                            hot.route_chains[idx].run_response_body(
                                                 session,
                                                 body,
                                                 end_of_stream,
@@ -986,10 +1386,10 @@ impl ProxyHttp for AiGateway {
             }
 
             // Run plugin chains
-            self.global_chain
+            hot.global_chain
                 .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
             if let Some(idx) = ctx.route_index {
-                self.route_chains[idx]
+                hot.route_chains[idx]
                     .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
             }
             return Ok(None);
@@ -997,12 +1397,47 @@ impl ProxyHttp for AiGateway {
 
         // ── NORMAL MODE: translate provider → OpenAI format ──
         if ctx.is_streaming {
-            if let Some(data) = body.as_ref() {
-                let mut guard = ctx.stream_translator.lock().unwrap();
-                if let Some(translator) = guard.as_mut() {
-                    let translated = translator.process_chunk(data, end_of_stream);
-                    drop(guard);
-                    *body = Some(Bytes::from(translated));
+            let provider = hot.providers.get(&ctx.provider_name);
+            let is_gemini = provider.map_or(false, |p| p.kind == ProviderKind::Gemini);
+
+            if is_gemini {
+                // Gemini streaming: we sent a non-streaming request to Gemini
+                // (because we can't know streaming status before upstream_request_filter).
+                // Buffer the full JSON response, translate to OpenAI, then emit as SSE.
+                if let Some(data) = body.take() {
+                    ctx.response_body_buf.extend_from_slice(&data);
+                }
+                if end_of_stream && !ctx.response_body_buf.is_empty() {
+                    if let Some(p) = provider {
+                        match p.translator.translate_response(&ctx.response_body_buf) {
+                            Ok(translated) => {
+                                // Convert the single JSON response to SSE stream format
+                                let mut sse_output = Vec::new();
+                                // Emit the response as a single SSE data event
+                                sse_output.extend_from_slice(b"data: ");
+                                sse_output.extend_from_slice(&translated);
+                                sse_output.extend_from_slice(b"\n\ndata: [DONE]\n\n");
+                                *body = Some(Bytes::from(sse_output));
+                            }
+                            Err(e) => {
+                                warn!(error = %e, "Failed to translate Gemini streaming response");
+                                *body = Some(Bytes::from(std::mem::take(&mut ctx.response_body_buf)));
+                            }
+                        }
+                    }
+                }
+            } else if let Some(data) = body.as_ref() {
+                match ctx.stream_translator.lock() {
+                    Ok(mut guard) => {
+                        if let Some(translator) = guard.as_mut() {
+                            let translated = translator.process_chunk(data, end_of_stream);
+                            drop(guard);
+                            *body = Some(Bytes::from(translated));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("stream_translator mutex poisoned in streaming: {e}");
+                    }
                 }
             }
         } else {
@@ -1017,12 +1452,39 @@ impl ProxyHttp for AiGateway {
                     extract_usage(&parsed, ctx);
                 }
 
-                let provider = self.providers.get(&ctx.provider_name);
+                let provider = hot.providers.get(&ctx.provider_name);
+
+                // Normalize error responses from non-OpenAI providers to OpenAI format
+                if ctx.upstream_status >= 400 {
+                    if let Some(p) = provider {
+                        if let Some(normalized) = normalize_error_response(
+                            &ctx.response_body_buf,
+                            ctx.upstream_status,
+                            p.kind,
+                        ) {
+                            *body = Some(Bytes::from(normalized));
+
+                            // Run plugin chains and return early
+                            hot.global_chain.run_response_body(
+                                session, body, end_of_stream, &mut ctx.plugin_ctx,
+                            )?;
+                            if let Some(idx) = ctx.route_index {
+                                hot.route_chains[idx].run_response_body(
+                                    session, body, end_of_stream, &mut ctx.plugin_ctx,
+                                )?;
+                            }
+                            return Ok(None);
+                        }
+                    }
+                    // If normalization returned None (already OpenAI format or unparseable),
+                    // fall through to the normal translation path.
+                }
+
                 if let Some(p) = provider {
                     match p.translator.translate_response(&ctx.response_body_buf) {
                         Ok(mut translated) => {
                             // Run post-call guardrails on non-streaming response
-                            if let Some(ref engine) = self.guardrail_engine {
+                            if let Some(ref engine) = hot.guardrail_engine {
                                 if engine.has_post_call() {
                                     if let Ok(resp_parsed) =
                                         serde_json::from_slice::<serde_json::Value>(&translated)
@@ -1108,10 +1570,10 @@ impl ProxyHttp for AiGateway {
         }
 
         // Run plugin chains on response body
-        self.global_chain
+        hot.global_chain
             .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
         if let Some(idx) = ctx.route_index {
-            self.route_chains[idx]
+            hot.route_chains[idx]
                 .run_response_body(session, body, end_of_stream, &mut ctx.plugin_ctx)?;
         }
 
@@ -1149,9 +1611,11 @@ impl ProxyHttp for AiGateway {
                 .inc_by(ctx.tokens_out);
         }
 
+        let hot = self.hot.load();
+
         // Calculate cost (skip when no tokens to avoid unnecessary lookups)
         let cost = if ctx.tokens_in > 0 || ctx.tokens_out > 0 {
-            self.cost_calculator
+            hot.cost_calculator
                 .calculate_cost(&ctx.model, ctx.tokens_in, ctx.tokens_out)
         } else {
             0.0
@@ -1159,14 +1623,16 @@ impl ProxyHttp for AiGateway {
         ctx.cost_usd = cost;
 
         // Run plugin logging chains
-        self.global_chain
+        hot.global_chain
             .run_logging(session, e, &mut ctx.plugin_ctx)
             .await;
         if let Some(idx) = ctx.route_index {
-            self.route_chains[idx]
+            hot.route_chains[idx]
                 .run_logging(session, e, &mut ctx.plugin_ctx)
                 .await;
         }
+
+        let latency_ms = duration.as_millis() as u64;
 
         info!(
             provider = %ctx.provider_name,
@@ -1175,10 +1641,34 @@ impl ProxyHttp for AiGateway {
             tokens_in = ctx.tokens_in,
             tokens_out = ctx.tokens_out,
             cost_usd = format!("{:.6}", cost),
-            latency_ms = duration.as_millis() as u64,
+            latency_ms = latency_ms,
             fallback = ctx.fallback_used,
             "request completed"
         );
+
+        // Write request log to admin store (fire-and-forget)
+        if let Some(ref admin_api) = self.admin_api {
+            let log = maxllm_admin::RequestLog {
+                id: uuid::Uuid::now_v7().to_string(),
+                timestamp: chrono::Utc::now(),
+                provider: ctx.provider_name.clone(),
+                model: ctx.model.clone(),
+                tokens_in: ctx.tokens_in,
+                tokens_out: ctx.tokens_out,
+                cost_usd: cost,
+                latency_ms,
+                status: ctx.upstream_status,
+                request_id: ctx.plugin_ctx.request_id.clone(),
+                client_ip: ctx.plugin_ctx.client_ip.clone(),
+                route_path: ctx.plugin_ctx.route_path.clone(),
+                endpoint_type: format!("{:?}", ctx.endpoint_type),
+                fallback_used: ctx.fallback_used,
+                error: e.map(|err| err.to_string()),
+            };
+            if let Err(err) = admin_api.record_log(log) {
+                warn!(error = %err, "Failed to record request log");
+            }
+        }
     }
 }
 
@@ -1187,27 +1677,63 @@ impl AiGateway {
     async fn handle_admin_request(
         &self,
         session: &mut Session,
-        _path: &str,
+        path: &str,
     ) -> pingora::Result<bool> {
-        // Return 404 if admin is not configured
-        let body = serde_json::json!({
-            "error": {
-                "message": "Admin API is not enabled. Configure [admin] in maxllm.toml.",
-                "type": "gateway_error",
-                "code": 404
+        let admin_api = match &self.admin_api {
+            Some(api) => api,
+            None => {
+                let body = serde_json::json!({
+                    "error": {
+                        "message": "Admin API is not enabled. Configure [admin] in maxllm.toml.",
+                        "type": "gateway_error",
+                        "code": 404
+                    }
+                });
+                let body_bytes = body.to_string().into_bytes();
+                let content_len = body_bytes.len().to_string();
+                let mut resp = ResponseHeader::build(404, Some(2))?;
+                resp.insert_header("Content-Type", "application/json")?;
+                resp.insert_header("Content-Length", &content_len)?;
+                session.write_response_header(Box::new(resp), false).await?;
+                session.write_response_body(Some(Bytes::from(body_bytes)), true).await?;
+                METRICS.active_requests.dec();
+                return Ok(true);
             }
-        });
-        let body_bytes = body.to_string().into_bytes();
-        let content_len = body_bytes.len().to_string();
+        };
 
-        let mut resp = ResponseHeader::build(404, Some(2))?;
+        // Extract method
+        let method = session.req_header().method.to_string();
+
+        // Extract auth key from Authorization header
+        let auth_key = session
+            .req_header()
+            .headers
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.strip_prefix("Bearer ").unwrap_or(v).to_string())
+            .unwrap_or_default();
+
+        // Read the request body for POST requests
+        let body_bytes = if method == "POST" {
+            match session.read_request_body().await? {
+                Some(b) => b.to_vec(),
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        // Dispatch to admin API
+        let api_resp = admin_api.handle_request(&method, path, &body_bytes, &auth_key);
+
+        // Send response
+        let content_len = api_resp.body.len().to_string();
+        let mut resp = ResponseHeader::build(api_resp.status, Some(2))?;
         resp.insert_header("Content-Type", "application/json")?;
         resp.insert_header("Content-Length", &content_len)?;
+        session.write_response_header(Box::new(resp), false).await?;
         session
-            .write_response_header(Box::new(resp), false)
-            .await?;
-        session
-            .write_response_body(Some(Bytes::from(body_bytes)), true)
+            .write_response_body(Some(Bytes::from(api_resp.body)), true)
             .await?;
         METRICS.active_requests.dec();
         Ok(true)
@@ -1257,6 +1783,92 @@ impl AiGateway {
             "guardrail blocked request",
         ))
     }
+}
+
+/// Normalize a provider error response body to OpenAI error format.
+/// Returns `Some(normalized_bytes)` if the body was translated, `None` otherwise.
+fn normalize_error_response(
+    body_bytes: &[u8],
+    status: u16,
+    provider_kind: ProviderKind,
+) -> Option<Vec<u8>> {
+    let parsed: serde_json::Value = serde_json::from_slice(body_bytes).ok()?;
+
+    // Already in OpenAI error format? OpenAI errors have:
+    // {"error": {"message": "...", "type": "...", "code": ...}}
+    // Anthropic has top-level "type":"error", Gemini has "status" instead of "type".
+    if let Some(err) = parsed.get("error") {
+        if err.get("message").is_some()
+            && err.get("type").is_some()
+            && !parsed.get("type").is_some()
+        {
+            return None;
+        }
+    }
+
+    let (message, error_type, code) = match provider_kind {
+        // Anthropic: {"type":"error","error":{"type":"...","message":"..."}}
+        ProviderKind::Anthropic | ProviderKind::Bedrock => {
+            let err = parsed.get("error")?;
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown Anthropic error");
+            let etype = err
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("api_error");
+            (msg.to_string(), etype.to_string(), status)
+        }
+        // Gemini: {"error":{"code":N,"message":"...","status":"..."}}
+        ProviderKind::Gemini => {
+            if let Some(err) = parsed.get("error") {
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown Gemini error");
+                let etype = err
+                    .get("status")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("api_error");
+                (msg.to_string(), etype.to_string(), status)
+            } else {
+                // Sometimes Gemini returns a plain error array
+                let msg = parsed
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("Unknown Gemini error");
+                (msg.to_string(), "api_error".to_string(), status)
+            }
+        }
+        // Cohere: {"message":"..."}
+        ProviderKind::Cohere => {
+            let msg = parsed
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("Unknown Cohere error");
+            (msg.to_string(), "api_error".to_string(), status)
+        }
+        // Mistral and other OpenAI-compat may already be in format, but handle gracefully
+        _ => {
+            // Try to extract any "message" or "error" string
+            let msg = parsed
+                .get("message")
+                .and_then(|m| m.as_str())
+                .or_else(|| parsed.get("error").and_then(|e| e.as_str()))
+                .unwrap_or("Unknown provider error");
+            (msg.to_string(), "api_error".to_string(), status)
+        }
+    };
+
+    let normalized = serde_json::json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "code": code
+        }
+    });
+    serde_json::to_vec(&normalized).ok()
 }
 
 /// Extract token usage from a response body.

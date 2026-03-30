@@ -27,6 +27,7 @@ pub mod budget;
 pub mod costs;
 pub mod keys;
 pub mod models;
+pub mod sqlite_store;
 pub mod store;
 pub mod teams;
 
@@ -35,4 +36,5 @@ pub use api::{AdminApi, ApiResponse};
 pub use budget::BudgetEnforcer;
 pub use costs::CostCalculator;
 pub use models::*;
+pub use sqlite_store::SqliteStore;
 pub use store::{AdminStore, InMemoryStore};
