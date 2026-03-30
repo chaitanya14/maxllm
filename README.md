@@ -24,7 +24,73 @@ A high-performance AI gateway built on [Pingora](https://github.com/cloudflare/p
 - **Cost tracking** &mdash; Automatic cost calculation with built-in model pricing for 10+ model families
 - **Observability** &mdash; Prometheus metrics, structured tracing, response headers (`X-MaxLLM-Provider`, `X-MaxLLM-Upstream-Ms`)
 
-## Quick Start
+## Getting Started
+
+### Option 1: Docker (recommended)
+
+The fastest way to run MaxLLM. Multi-platform image available for amd64 and arm64.
+
+```bash
+# Pull the image
+docker pull chaitanyadev14/maxllm:latest
+
+# Run with your API keys
+docker run -d --name maxllm \
+  -p 8080:8080 \
+  -e OPENAI_API_KEY="sk-..." \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e GEMINI_API_KEY="..." \
+  -v $(pwd)/maxllm.toml:/app/maxllm.toml \
+  chaitanyadev14/maxllm:latest
+```
+
+Or use Docker Compose:
+
+```bash
+# Set your API keys in the environment or a .env file
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Start the gateway
+docker compose up -d
+
+# Check health
+curl http://localhost:8080/health
+```
+
+### Option 2: CLI
+
+The `maxllm` CLI provides a single-binary entry point for managing the gateway.
+
+```bash
+# Build from source
+cargo build --release
+
+# Generate a starter config
+./target/release/maxllm init
+
+# Set your provider API keys
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Start the gateway
+./target/release/maxllm start
+
+# Check status
+./target/release/maxllm status
+
+# View config
+./target/release/maxllm config
+
+# Create a virtual key
+export MAXLLM_ADMIN_KEY="your-master-key"
+./target/release/maxllm keys create --name "my-app"
+
+# Stop the gateway
+./target/release/maxllm stop
+```
+
+### Option 3: Build from source (server binary directly)
 
 ```bash
 # Build
@@ -34,10 +100,15 @@ cargo build --release
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Run
-./target/release/maxllm --config maxllm.toml
+# Run the server directly
+./target/release/maxllm-server --config maxllm.toml
+```
 
-# Send a request
+### Send your first request
+
+Once the gateway is running (any option above):
+
+```bash
 curl http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer sk-maxllm-dev-key" \
   -H "Content-Type: application/json" \
