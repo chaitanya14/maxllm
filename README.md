@@ -12,6 +12,42 @@ A high-performance AI gateway built on [Pingora](https://github.com/cloudflare/p
   <img src="docs/architecture.svg" alt="MaxLLM Gateway Architecture" width="100%"/>
 </p>
 
+## Table of Contents
+
+- [Features](#features)
+- [Getting Started](#getting-started)
+  - [Docker](#option-1-docker-recommended)
+  - [CLI](#option-2-cli)
+  - [Build from source](#option-3-build-from-source-server-binary-directly)
+  - [Send your first request](#send-your-first-request)
+  - [Native Provider Endpoints](#native-provider-endpoints)
+  - [Pass-Through Endpoints](#pass-through-endpoints)
+- [Supported Providers](#supported-providers)
+- [Configuration](#configuration)
+  - [Providers](#providers)
+  - [Routes](#routes)
+  - [Plugins](#plugins)
+  - [Model Aliases](#model-aliases)
+- [Routing Strategies](#routing-strategies)
+- [Plugins](#plugins-1)
+- [Guardrails](#guardrails)
+  - [Providers](#providers-1)
+  - [Configuration](#configuration-1)
+  - [Request-Level Selection](#request-level-selection)
+- [Virtual Keys & Multi-Tenancy](#virtual-keys--multi-tenancy)
+- [Observability](#observability)
+  - [Prometheus Metrics](#prometheus-metrics)
+  - [Response Headers](#response-headers)
+- [Architecture](#architecture)
+  - [Request Flow](#request-flow)
+  - [Routing & Failover](#routing--failover)
+- [Performance](#performance)
+- [Development](#development)
+  - [CLI Options](#cli-options)
+  - [Environment Variables](#environment-variables)
+- [Why Pingora?](#why-pingora)
+- [License](#license)
+
 ## Features
 
 - **15 LLM providers** &mdash; OpenAI, Anthropic, Gemini, Azure, Bedrock, Groq, Together, Fireworks, Mistral, xAI, DeepSeek, Ollama, Cohere, DeepInfra, and any OpenAI-compatible endpoint
