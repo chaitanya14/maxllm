@@ -8,8 +8,6 @@ LITELLM_PORT=8090
 DURATION=30s
 THREADS=4
 CONNECTIONS=50
-RESULTS=/tmp/benchmark_results.txt
-
 WRK_BODY='{"model":"mock-model","messages":[{"role":"user","content":"What is 2+2? Answer in one word."}]}'
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -117,8 +115,12 @@ for i in $(seq 1 30); do
 done
 
 # Verify with a real request
-curl -sf http://127.0.0.1:$LITELLM_PORT/v1/chat/completions -X POST \
-  -H "Content-Type: application/json" -d "$WRK_BODY" > /dev/null 2>&1 && echo "LiteLLM OK" || echo "LiteLLM verify FAILED"
+if ! curl -sf http://127.0.0.1:$LITELLM_PORT/v1/chat/completions -X POST \
+  -H "Content-Type: application/json" -d "$WRK_BODY" > /dev/null 2>&1; then
+  echo "ERROR: LiteLLM verify FAILED — cannot reach mock upstream"
+  exit 1
+fi
+echo "LiteLLM OK"
 
 echo ""
 echo "============================================"

@@ -47,7 +47,7 @@ MaxLLM preserves **32.7%** of raw upstream throughput. LiteLLM preserves **0.97%
 | Component | Version |
 |---|---|
 | MaxLLM | built from source (Rust, release mode) |
-| LiteLLM | 1.82.6 (pip, Python 3.14) |
+| LiteLLM | 1.82.6 (pip, Python 3.14.3) |
 | wrk | 4.2.0 [kqueue] |
 | Rust | 1.94.0 (2026-03-02) |
 
@@ -67,7 +67,7 @@ MaxLLM preserves **32.7%** of raw upstream throughput. LiteLLM preserves **0.97%
 
 **MaxLLM config:** 4 threads, no plugins, single route to mock upstream.
 
-**LiteLLM config:** 4 workers (`--num_workers 4`), single model pointing to same mock upstream.
+**LiteLLM config:** 4 Gunicorn workers (`--num_workers 4`), single model pointing to same mock upstream. The 4-worker configuration was chosen as the closest equivalent to MaxLLM's 4 Pingora threads — each Gunicorn worker runs its own Python process with an async event loop.
 
 Both proxies were configured with equivalent minimal setups — no auth, no logging, no rate limiting — to measure pure proxy overhead.
 
@@ -89,7 +89,7 @@ All tests ran sequentially on the same machine to ensure fair comparison. The mo
 | **Runtime** | Pingora (Cloudflare's proxy framework) | uvicorn + FastAPI + asyncio |
 | **HTTP handling** | Zero-copy, kernel-level kqueue | Python async with multiple abstraction layers |
 | **Memory model** | Stack-allocated, no GC | Heap-heavy, garbage collected |
-| **Connection handling** | Epoll/kqueue native | Python event loop |
+| **Connection handling** | Native kqueue (macOS) / epoll (Linux) | Python event loop |
 
 LiteLLM routes requests through ~15 layers of Python abstraction (router → fallback → retry → function wrapper → OpenAI client → httpx → aiohttp transport) before a single byte reaches the upstream. MaxLLM's Pingora pipeline does the same work in compiled Rust with near-zero overhead.
 
@@ -99,11 +99,17 @@ LiteLLM routes requests through ~15 layers of Python abstraction (router → fal
 # Build MaxLLM (release mode)
 cargo build --release
 
+# Build the mock upstream server
+rustc -O perf/mock_upstream.rs -o perf/mock_upstream
+
+# Install LiteLLM
+pip install litellm
+
 # Run the benchmark
 bash perf/benchmark_clean.sh
 ```
 
-Requires: `wrk`, `litellm` (pip), and the mock upstream binary in `perf/`.
+Requires: `wrk` (`brew install wrk`), `litellm` (pip), and Rust toolchain.
 
 ---
 
