@@ -565,12 +565,15 @@ flowchart LR
 
 ## Performance
 
-Benchmarked on macOS (Apple Silicon), 4 Pingora worker threads:
+Benchmarked on Mac mini M4, 4 Pingora worker threads, 50 connections, 30s duration:
 
-| Scenario | Req/sec | p99 Latency |
+| Scenario | Req/sec | Avg Latency |
 |----------|---------|-------------|
-| `/health` (no plugins) | 178,000 | 980us |
-| Auth rejection (2 plugins) | 14,000 | 13ms |
+| `/health` (no plugins) | 178,000 | 980 µs |
+| Auth rejection (2 plugins) | 14,000 | 13 ms |
+| Proxy to mock upstream | 71,203 | 667 µs |
+
+**vs LiteLLM on identical hardware:** MaxLLM handles 33.8x more requests/sec with 36x lower latency. See [BENCHMARKS.md](BENCHMARKS.md) for the full head-to-head report.
 
 Run benchmarks with the included Makefile targets:
 
