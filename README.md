@@ -570,8 +570,7 @@ Benchmarked on Mac mini M4, 4 Pingora worker threads, 50 connections, 30s durati
 | Scenario | Req/sec | Avg Latency |
 |----------|---------|-------------|
 | `/health` (no plugins) | 178,000 | 980 µs |
-| Auth rejection (2 plugins) | 14,000 | 13 ms |
-| Proxy to mock upstream | 71,203 | 667 µs |
+| Proxy to mock upstream (no plugins) | 71,203 | 667 µs |
 
 **vs LiteLLM on identical hardware:** MaxLLM handles 33.8x more requests/sec with 36x lower latency. See [BENCHMARKS.md](BENCHMARKS.md) for the full head-to-head report.
 
