@@ -106,7 +106,7 @@ rustc -O perf/mock_upstream.rs -o perf/mock_upstream
 pip install litellm
 
 # Run the benchmark
-bash perf/benchmark_clean.sh
+bash perf/benchmark.sh
 ```
 
 Requires: `wrk` (`brew install wrk`), `litellm` (pip), and Rust toolchain.
