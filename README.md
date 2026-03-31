@@ -565,7 +565,7 @@ flowchart LR
 
 ## Performance
 
-Benchmarked on Mac mini M4, 4 Pingora worker threads, 50 connections, 30s duration:
+Benchmarked on Apple Silicon Mac, 4 Pingora worker threads, 50 connections, 30s duration:
 
 | Scenario | Req/sec | Avg Latency |
 |----------|---------|-------------|
