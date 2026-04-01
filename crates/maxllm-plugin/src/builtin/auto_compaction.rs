@@ -159,7 +159,7 @@ impl AutoCompactionPlugin {
 
     /// Estimate token count for a string using the chars/4 heuristic.
     pub fn estimate_tokens(text: &str) -> usize {
-        (text.len() + 3) / 4
+        text.len().div_ceil(4)
     }
 
     /// Estimate total tokens across all messages in an OpenAI-format body.
@@ -168,7 +168,7 @@ impl AutoCompactionPlugin {
             Some(m) => m,
             None => return 0,
         };
-        messages.iter().map(|msg| Self::estimate_message_tokens(msg)).sum()
+        messages.iter().map(Self::estimate_message_tokens).sum()
     }
 
     /// Estimate tokens for a single message.
@@ -215,12 +215,13 @@ impl Plugin for AutoCompactionPlugin {
         }
 
         // Signal the gateway to run compaction in request_body_filter.
-        ctx.extensions
-            .insert(EXT_AUTO_COMPACT.into(), "1".into());
+        ctx.extensions.insert(EXT_AUTO_COMPACT.into(), "1".into());
         ctx.extensions
             .insert(EXT_COMPACT_STRATEGY.into(), self.strategy.as_str().into());
-        ctx.extensions
-            .insert(EXT_COMPACT_THRESHOLD.into(), self.threshold_tokens.to_string());
+        ctx.extensions.insert(
+            EXT_COMPACT_THRESHOLD.into(),
+            self.threshold_tokens.to_string(),
+        );
         ctx.extensions
             .insert(EXT_COMPACT_WINDOW.into(), self.window_size.to_string());
 

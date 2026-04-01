@@ -355,6 +355,17 @@ pub fn build_hot_state(config: &Config) -> Result<HotState, Box<dyn std::error::
     })
 }
 
+/// Parameters for the auto-compaction body transformation.
+struct CompactionParams<'a> {
+    strategy: &'a str,
+    threshold: usize,
+    window_size: usize,
+    preserve_system: bool,
+    min_messages: usize,
+    llm_provider: Option<&'a str>,
+    llm_model: Option<&'a str>,
+}
+
 impl AiGateway {
     pub fn new(config: &Config) -> Result<Self, Box<dyn std::error::Error>> {
         let hot_state = build_hot_state(config)?;
@@ -503,16 +514,16 @@ impl AiGateway {
 
     /// Apply auto-compaction to an OpenAI-format request body.
     /// Returns true if the body was modified.
-    fn apply_compaction(
-        body: &mut serde_json::Value,
-        strategy: &str,
-        threshold: usize,
-        window_size: usize,
-        preserve_system: bool,
-        min_messages: usize,
-        llm_provider: Option<&str>,
-        llm_model: Option<&str>,
-    ) -> bool {
+    fn apply_compaction(body: &mut serde_json::Value, params: CompactionParams<'_>) -> bool {
+        let CompactionParams {
+            strategy,
+            threshold,
+            window_size,
+            preserve_system,
+            min_messages,
+            llm_provider,
+            llm_model,
+        } = params;
         use maxllm_plugin::builtin::auto_compaction::AutoCompactionPlugin;
 
         let messages = match body.get("messages").and_then(|m| m.as_array()) {
@@ -609,8 +620,7 @@ impl AiGateway {
                 }
 
                 let dropped = non_system.len() - window_size;
-                let kept: Vec<serde_json::Value> =
-                    non_system.into_iter().skip(dropped).collect();
+                let kept: Vec<serde_json::Value> = non_system.into_iter().skip(dropped).collect();
 
                 let mut final_messages = system_messages;
                 final_messages.extend(kept);
@@ -634,14 +644,18 @@ impl AiGateway {
                 let provider = match llm_provider {
                     Some(p) => p,
                     None => {
-                        tracing::warn!("auto-compaction strategy=llm but no summarize_provider configured");
+                        tracing::warn!(
+                            "auto-compaction strategy=llm but no summarize_provider configured"
+                        );
                         return false;
                     }
                 };
                 let model = match llm_model {
                     Some(m) => m,
                     None => {
-                        tracing::warn!("auto-compaction strategy=llm but no summarize_model configured");
+                        tracing::warn!(
+                            "auto-compaction strategy=llm but no summarize_model configured"
+                        );
                         return false;
                     }
                 };
@@ -723,7 +737,10 @@ impl AiGateway {
             obj.remove("__compact_summarize");
         }
 
-        let provider = params.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+        let provider = params
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let model = params.get("model").and_then(|v| v.as_str()).unwrap_or("");
         let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
         let system_messages = params
@@ -737,14 +754,13 @@ impl AiGateway {
             .cloned()
             .unwrap_or_default();
 
-        let base_url = std::env::var("MAXLLM_SUMMARIZE_BASE_URL").unwrap_or_else(|_| {
-            match provider {
+        let base_url =
+            std::env::var("MAXLLM_SUMMARIZE_BASE_URL").unwrap_or_else(|_| match provider {
                 "openai" => "https://api.openai.com".to_string(),
                 "anthropic" => "https://api.anthropic.com".to_string(),
                 "groq" => "https://api.groq.com/openai".to_string(),
                 _ => format!("https://api.{provider}.com"),
-            }
-        });
+            });
 
         let api_key_env = format!("{}_API_KEY", provider.to_uppercase().replace('-', "_"));
         let api_key = std::env::var(&api_key_env).unwrap_or_default();
@@ -1512,7 +1528,13 @@ impl ProxyHttp for AiGateway {
                 }
 
                 // ── AUTO-COMPACTION ──
-                if ctx.plugin_ctx.extensions.get("auto_compact").map(|v| v.as_str()) == Some("1") {
+                if ctx
+                    .plugin_ctx
+                    .extensions
+                    .get("auto_compact")
+                    .map(|v| v.as_str())
+                    == Some("1")
+                {
                     if let Ok(mut body_json) =
                         serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf)
                     {
@@ -1550,13 +1572,23 @@ impl ProxyHttp for AiGateway {
 
                         let compacted = Self::apply_compaction(
                             &mut body_json,
-                            &strategy,
-                            threshold,
-                            window_size,
-                            preserve_system,
-                            min_messages,
-                            ctx.plugin_ctx.extensions.get("compact_llm_provider").map(|s| s.as_str()),
-                            ctx.plugin_ctx.extensions.get("compact_llm_model").map(|s| s.as_str()),
+                            CompactionParams {
+                                strategy: &strategy,
+                                threshold,
+                                window_size,
+                                preserve_system,
+                                min_messages,
+                                llm_provider: ctx
+                                    .plugin_ctx
+                                    .extensions
+                                    .get("compact_llm_provider")
+                                    .map(|s| s.as_str()),
+                                llm_model: ctx
+                                    .plugin_ctx
+                                    .extensions
+                                    .get("compact_llm_model")
+                                    .map(|s| s.as_str()),
+                            },
                         );
                         if compacted {
                             // LLM strategy: complete the async summarization call.

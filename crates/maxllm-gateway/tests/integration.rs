@@ -1363,7 +1363,7 @@ async fn test_compaction_sliding_window_keeps_last_n() {
     let last_user = upstream_messages
         .iter()
         .filter(|m| m["role"].as_str() == Some("user"))
-        .last()
+        .next_back()
         .unwrap();
     let content = last_user["content"].as_str().unwrap();
     assert!(
