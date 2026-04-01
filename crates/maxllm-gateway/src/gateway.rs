@@ -15,6 +15,9 @@ use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use maxllm_config::{Config, EndpointType, ProviderKind, RouteConfig};
+use maxllm_plugin::builtin::auto_compaction::{
+    apply_llm_compaction, compact_messages, CompactionParams, CompactionResult,
+};
 use maxllm_plugin::guardrail::{
     self, GuardrailEngine, GuardrailInput, GuardrailOutput, GuardrailVerdict,
 };
@@ -26,6 +29,14 @@ use pingora::proxy::{ProxyHttp, Session};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+/// Shared HTTP client for LLM-based auto-compaction summarization calls.
+static LLM_HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("reqwest client init failed")
+});
 
 /// Well-known models for each provider kind.
 fn well_known_models(kind: ProviderKind) -> &'static [&'static str] {
@@ -834,10 +845,31 @@ impl ProxyHttp for AiGateway {
         } else {
             let is_body_passthrough = provider.translator.name() == "openai"
                 || provider.translator.name() == "azure_openai";
-            if is_body_passthrough {
+            let compaction_enabled = ctx
+                .plugin_ctx
+                .extensions
+                .get("auto_compact")
+                .map(|v| v.as_str())
+                == Some("1");
+            if is_body_passthrough && !compaction_enabled {
                 // Mark as body-passthrough so request_body_filter lets chunks flow
                 ctx.keep_request_content_length = true;
                 // Keep original Content-Length header (don't remove, don't set chunked)
+            } else if is_body_passthrough && compaction_enabled {
+                // Compaction will modify the body but OpenAI/Cloudflare rejects
+                // Transfer-Encoding: chunked. Strategy: keep the ORIGINAL
+                // Content-Length, then in request_body_filter, pad the compacted
+                // body with spaces to match the original size. JSON parsers
+                // ignore trailing whitespace, so the upstream sees valid JSON.
+                ctx.keep_request_content_length = true;
+                // Store original Content-Length for padding target
+                if let Some(cl) = upstream_request.headers.get("Content-Length") {
+                    if let Ok(cl_str) = cl.to_str() {
+                        ctx.plugin_ctx
+                            .extensions
+                            .insert("original_content_length".into(), cl_str.to_string());
+                    }
+                }
             } else {
                 let _ = upstream_request.remove_header("Content-Length");
                 upstream_request.insert_header("Transfer-Encoding", "chunked")?;
@@ -862,7 +894,7 @@ impl ProxyHttp for AiGateway {
 
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
@@ -876,45 +908,71 @@ impl ProxyHttp for AiGateway {
         // For OpenAI/Azure providers, the body isn't translated, so we forward
         // chunks immediately to preserve Content-Length framing. We buffer a
         // copy to extract model/streaming info on end_of_stream.
+        //
+        // Exception: if auto-compaction is enabled, we take the body, compact it,
+        // and replace it — switching to chunked framing since the body size changes.
         if ctx.keep_request_content_length {
-            // Buffer a copy for metadata extraction, but DON'T take the body —
-            // let it flow through to upstream unchanged.
-            if let Some(ref data) = body {
-                ctx.request_body_buf.extend_from_slice(data);
-            }
-            if end_of_stream && !ctx.body_translated {
-                ctx.body_translated = true;
-                let hot = self.hot.load();
-                if let Ok(parsed) =
-                    serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf)
-                {
-                    if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
-                        let resolved = Self::resolve_model_alias(&hot, model);
-                        ctx.model = resolved.clone();
-                        ctx.plugin_ctx.model = resolved;
-                    }
-                    if let Some(stream) = parsed.get("stream").and_then(|v| v.as_bool()) {
-                        ctx.is_streaming = stream;
-                        if stream {
-                            // Set up streaming passthrough (OpenAI SSE → client)
-                            let provider = hot.providers.get(&ctx.provider_name);
-                            if let Some(p) = provider {
-                                match ctx.stream_translator.lock() {
-                                    Ok(mut guard) => {
-                                        *guard = Some(p.translator.streaming_translator());
-                                    }
-                                    Err(e) => {
-                                        warn!("stream_translator mutex poisoned: {e}");
+            let compaction_enabled = ctx
+                .plugin_ctx
+                .extensions
+                .get("auto_compact")
+                .map(|v| v.as_str())
+                == Some("1");
+
+            if compaction_enabled {
+                // Take the body into our buffer so we can mutate it.
+                if let Some(data) = body.take() {
+                    ctx.request_body_buf.extend_from_slice(&data);
+                }
+                if end_of_stream && !ctx.body_translated {
+                    // Fall through to the normal compaction + translation path.
+                    // Clear keep_request_content_length so the normal path runs.
+                    ctx.keep_request_content_length = false;
+                    // Do NOT set body_translated here — let the normal path do it.
+                    // Continue below — do NOT return here.
+                } else {
+                    return Ok(());
+                }
+            } else {
+                // Buffer a copy for metadata extraction, but DON'T take the body —
+                // let it flow through to upstream unchanged.
+                if let Some(ref data) = body {
+                    ctx.request_body_buf.extend_from_slice(data);
+                }
+                if end_of_stream && !ctx.body_translated {
+                    ctx.body_translated = true;
+                    let hot = self.hot.load();
+                    if let Ok(parsed) =
+                        serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf)
+                    {
+                        if let Some(model) = parsed.get("model").and_then(|m| m.as_str()) {
+                            let resolved = Self::resolve_model_alias(&hot, model);
+                            ctx.model = resolved.clone();
+                            ctx.plugin_ctx.model = resolved;
+                        }
+                        if let Some(stream) = parsed.get("stream").and_then(|v| v.as_bool()) {
+                            ctx.is_streaming = stream;
+                            if stream {
+                                // Set up streaming passthrough (OpenAI SSE → client)
+                                let provider = hot.providers.get(&ctx.provider_name);
+                                if let Some(p) = provider {
+                                    match ctx.stream_translator.lock() {
+                                        Ok(mut guard) => {
+                                            *guard = Some(p.translator.streaming_translator());
+                                        }
+                                        Err(e) => {
+                                            warn!("stream_translator mutex poisoned: {e}");
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    // Free the metadata buffer (not needed anymore)
+                    ctx.request_body_buf = Vec::new();
                 }
-                // Free the metadata buffer (not needed anymore)
-                ctx.request_body_buf = Vec::new();
+                return Ok(());
             }
-            return Ok(());
         }
 
         // ── EMBEDDINGS: forward as-is for OpenAI-compatible, extract model ──
@@ -1011,7 +1069,7 @@ impl ProxyHttp for AiGateway {
                             } = verdict
                             {
                                 return self
-                                    .send_guardrail_block(_session, ctx, guardrail, reason)
+                                    .send_guardrail_block(session, ctx, guardrail, reason)
                                     .await;
                             }
                         }
@@ -1087,7 +1145,7 @@ impl ProxyHttp for AiGateway {
                                     ref reason,
                                 } => {
                                     return self
-                                        .send_guardrail_block(_session, ctx, guardrail, reason)
+                                        .send_guardrail_block(session, ctx, guardrail, reason)
                                         .await;
                                 }
                                 GuardrailVerdict::Modify {
@@ -1143,6 +1201,130 @@ impl ProxyHttp for AiGateway {
                             if obj.remove("guardrails").is_some() {
                                 ctx.request_body_buf = serde_json::to_vec(&parsed)
                                     .unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
+                            }
+                        }
+                    }
+                }
+
+                // ── AUTO-COMPACTION ──
+
+                if ctx
+                    .plugin_ctx
+                    .extensions
+                    .get("auto_compact")
+                    .map(|v| v.as_str())
+                    == Some("1")
+                {
+                    if let Ok(mut body_json) =
+                        serde_json::from_slice::<serde_json::Value>(&ctx.request_body_buf)
+                    {
+                        let strategy = ctx
+                            .plugin_ctx
+                            .extensions
+                            .get("compact_strategy")
+                            .map(|s| s.as_str())
+                            .unwrap_or("truncate")
+                            .to_string();
+                        let threshold: usize = ctx
+                            .plugin_ctx
+                            .extensions
+                            .get("compact_threshold")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(6000);
+                        let window_size: usize = ctx
+                            .plugin_ctx
+                            .extensions
+                            .get("compact_window_size")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(20);
+                        let preserve_system = ctx
+                            .plugin_ctx
+                            .extensions
+                            .get("compact_preserve_system")
+                            .map(|s| s.as_str())
+                            != Some("0");
+                        let min_messages: usize = ctx
+                            .plugin_ctx
+                            .extensions
+                            .get("compact_min_messages")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(2);
+
+                        let result = compact_messages(
+                            &mut body_json,
+                            CompactionParams {
+                                strategy: &strategy,
+                                threshold,
+                                window_size,
+                                preserve_system,
+                                min_messages,
+                                llm_provider: ctx
+                                    .plugin_ctx
+                                    .extensions
+                                    .get("compact_llm_provider")
+                                    .map(|s| s.as_str()),
+                                llm_model: ctx
+                                    .plugin_ctx
+                                    .extensions
+                                    .get("compact_llm_model")
+                                    .map(|s| s.as_str()),
+                            },
+                        );
+                        let modified = match result {
+                            CompactionResult::NoOp => false,
+                            CompactionResult::Compacted => true,
+                            CompactionResult::NeedsLlm(llm_data) => {
+                                // api_key and base_url must come from gateway provider config.
+                                // If the summarize_provider is not registered in [providers],
+                                // skip LLM compaction rather than silently reading env vars.
+                                match hot.providers.get(&llm_data.provider) {
+                                    Some(p) => {
+                                        let scheme = if p.tls { "https" } else { "http" };
+                                        let api_key = p.api_key.clone();
+                                        let base_url = format!("{scheme}://{}:{}", p.host, p.port);
+                                        apply_llm_compaction(
+                                            &mut body_json,
+                                            llm_data,
+                                            &api_key,
+                                            &base_url,
+                                            &LLM_HTTP_CLIENT,
+                                        )
+                                        .await
+                                    }
+                                    None => {
+                                        tracing::warn!(
+                                            provider = %llm_data.provider,
+                                            "auto-compaction: summarize_provider '{}' not found \
+                                             in gateway config; add a [providers.{}] section \
+                                             with api_key to enable LLM-based compaction",
+                                            llm_data.provider,
+                                            llm_data.provider
+                                        );
+                                        false
+                                    }
+                                }
+                            }
+                        };
+                        if modified {
+                            ctx.request_body_buf = serde_json::to_vec(&body_json)
+                                .unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
+
+                            // For OpenAI passthrough with compaction, the Content-Length
+                            // header was already sent with the original body size.
+                            // Pad the compacted body with spaces to match, so the
+                            // upstream reads exactly Content-Length bytes. JSON parsers
+                            // ignore trailing whitespace.
+                            if let Some(original_cl) = ctx
+                                .plugin_ctx
+                                .extensions
+                                .get("original_content_length")
+                                .and_then(|s| s.parse::<usize>().ok())
+                            {
+                                if ctx.request_body_buf.len() < original_cl {
+                                    let padding = original_cl - ctx.request_body_buf.len();
+                                    ctx.request_body_buf
+                                        .extend(std::iter::repeat_n(b' ', padding));
+                                }
                             }
                         }
                     }
@@ -1208,9 +1390,10 @@ impl ProxyHttp for AiGateway {
             let _ = upstream_response.remove_header("Content-Length");
         }
 
-        // For error responses from non-OpenAI providers, remove Content-Length
-        // since the body will be normalized to OpenAI error format.
-        if status >= 400 && !skip_response_translation {
+        // Error responses (4xx/5xx) are always passed through normalize_error_response()
+        // which rewrites the body into OpenAI error format, changing the body size.
+        // Remove Content-Length unconditionally so we never mismatch the translated body.
+        if status >= 400 {
             let _ = upstream_response.remove_header("Content-Length");
         }
 

@@ -6,6 +6,7 @@
 //
 // http://www.apache.org/licenses/LICENSE-2.0
 
+pub mod auto_compaction;
 mod cache;
 mod cors;
 mod ip_restriction;
@@ -20,6 +21,7 @@ mod request_id;
 pub mod secret_scan;
 mod webhook;
 
+pub use auto_compaction::AutoCompactionPlugin;
 pub use cache::CachePlugin;
 pub use cors::CorsPlugin;
 pub use ip_restriction::IpRestrictionPlugin;
