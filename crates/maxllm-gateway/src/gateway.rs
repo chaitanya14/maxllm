@@ -713,7 +713,7 @@ impl ProxyHttp for AiGateway {
 
     async fn upstream_peer(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
         let hot = self.hot.load();
@@ -865,10 +865,9 @@ impl ProxyHttp for AiGateway {
                 // Store original Content-Length for padding target
                 if let Some(cl) = upstream_request.headers.get("Content-Length") {
                     if let Ok(cl_str) = cl.to_str() {
-                        ctx.plugin_ctx.extensions.insert(
-                            "original_content_length".into(),
-                            cl_str.to_string(),
-                        );
+                        ctx.plugin_ctx
+                            .extensions
+                            .insert("original_content_length".into(), cl_str.to_string());
                     }
                 }
             } else {
@@ -1208,7 +1207,7 @@ impl ProxyHttp for AiGateway {
                 }
 
                 // ── AUTO-COMPACTION ──
-                let mut compaction_modified = false;
+
                 if ctx
                     .plugin_ctx
                     .extensions
@@ -1315,15 +1314,16 @@ impl ProxyHttp for AiGateway {
                             // Pad the compacted body with spaces to match, so the
                             // upstream reads exactly Content-Length bytes. JSON parsers
                             // ignore trailing whitespace.
-                            if let Some(original_cl) = ctx.plugin_ctx.extensions
+                            if let Some(original_cl) = ctx
+                                .plugin_ctx
+                                .extensions
                                 .get("original_content_length")
                                 .and_then(|s| s.parse::<usize>().ok())
                             {
                                 if ctx.request_body_buf.len() < original_cl {
                                     let padding = original_cl - ctx.request_body_buf.len();
-                                    ctx.request_body_buf.extend(
-                                        std::iter::repeat(b' ').take(padding)
-                                    );
+                                    ctx.request_body_buf
+                                        .extend(std::iter::repeat_n(b' ', padding));
                                 }
                             }
                         }
