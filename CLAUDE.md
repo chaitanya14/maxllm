@@ -79,7 +79,7 @@ maxllm/
   maxllm.toml             # Gateway configuration
   crates/
     maxllm-config/        # TOML config parsing, env var expansion, validation
-    maxllm-plugin/        # Plugin trait, chain executor, 10 built-in plugins
+    maxllm-plugin/        # Plugin trait, chain executor, 14 built-in plugins
     maxllm-translate/     # Provider translation (OpenAI <-> 15 providers)
     maxllm-admin/         # Virtual keys, teams, cost tracking, budget enforcement, admin API
     maxllm-gateway/       # Main binary: Pingora ProxyHttp implementation + routing
@@ -132,7 +132,7 @@ provider = "openai"
 plugins = ["rate_limiter", "cors"]
 ```
 
-### Built-in Plugins (10)
+### Built-in Plugins (14)
 
 | Plugin | Category | Purpose |
 |--------|----------|---------|
@@ -146,6 +146,10 @@ plugins = ["rate_limiter", "cors"]
 | pii_filter | `pii_filter` | PII detection (email, SSN, credit card, phone, IP) |
 | keyword_block | `keyword_block` | Keyword/phrase blocking for guardrails |
 | max_size | `max_size` | Request body size and token limits |
+| prompt_guard | `prompt_guard` | Prompt injection/jailbreak detection (6 built-in rules) |
+| secret_scan | `secret_scan` | Secret/credential detection (9 built-in patterns) |
+| regex_guard | `regex_guard` | Custom regex-based content rules |
+| auto_compaction | `auto_compaction` | Context window compaction (truncate, sliding window, LLM summarize) |
 
 ### Adding a New Plugin
 

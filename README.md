@@ -54,7 +54,7 @@ A high-performance AI gateway built on [Pingora](https://github.com/cloudflare/p
 - **Three input modes** &mdash; OpenAI-format with translation, native provider format (Anthropic Messages API, Gemini, etc.), or raw pass-through
 - **Streaming support** &mdash; SSE streaming with real-time format translation (Anthropic SSE, Gemini SSE, Cohere SSE &rarr; OpenAI SSE)
 - **Smart routing** &mdash; Fallback chains, weighted load balancing, round-robin, least-connections, with per-provider circuit breakers
-- **Plugin system** &mdash; 13 built-in plugins (auth, rate limiting, CORS, caching, PII filtering, prompt injection detection, and more)
+- **Plugin system** &mdash; 14 built-in plugins (auth, rate limiting, CORS, caching, PII filtering, prompt injection detection, context compaction, and more)
 - **Guardrails** &mdash; Content-level guardrails with 8 providers (built-in, webhook, Lakera AI, CEL expressions)
 - **Virtual keys** &mdash; Multi-tenant key management with per-key budgets, rate limits, model access control, and team grouping
 - **Cost tracking** &mdash; Automatic cost calculation with built-in model pricing for 10+ model families
@@ -331,7 +331,7 @@ All strategies include automatic **circuit breaking**: providers are temporarily
 
 ## Plugins
 
-13 built-in plugins with 5 lifecycle hooks (`on_request`, `on_upstream_request`, `on_response`, `on_response_body`, `on_logging`):
+14 built-in plugins with 5 lifecycle hooks (`on_request`, `on_upstream_request`, `on_response`, `on_response_body`, `on_logging`):
 
 | Plugin | Category | Purpose |
 |--------|----------|---------|
@@ -348,6 +348,7 @@ All strategies include automatic **circuit breaking**: providers are temporarily
 | prompt_guard | `prompt_guard` | Prompt injection/jailbreak detection (6 built-in rules) |
 | secret_scan | `secret_scan` | Secret/credential detection (9 built-in patterns) |
 | regex_guard | `regex_guard` | Custom regex-based content rules |
+| auto_compaction | `auto_compaction` | Context window compaction (truncate, sliding window, LLM summarize) |
 
 ## Guardrails
 
@@ -454,7 +455,7 @@ MaxLLM is a **proxy, not a client**. It uses zero HTTP client libraries. Pingora
 ```
 crates/
   maxllm-config/        # TOML config parsing, env var expansion, validation
-  maxllm-plugin/        # Plugin trait, chain executor, 13 built-in plugins, guardrail framework
+  maxllm-plugin/        # Plugin trait, chain executor, 14 built-in plugins, guardrail framework
   maxllm-translate/     # Provider translation (OpenAI <-> 15 provider formats)
   maxllm-admin/         # Virtual keys, teams, cost tracking, budget enforcement
   maxllm-gateway/       # Main binary: Pingora ProxyHttp implementation + routing
