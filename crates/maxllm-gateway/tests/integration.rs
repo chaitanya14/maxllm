@@ -1165,3 +1165,283 @@ provider = "gemini"
     let has_pirate = pirate_words.iter().any(|w| content.contains(w));
     assert!(has_pirate, "Expected pirate speak, got: {content}");
 }
+
+// ---------------------------------------------------------------------------
+// Auto-compaction tests
+// ---------------------------------------------------------------------------
+
+const COMPACT_TRUNCATE_CONFIG: &str = r#"
+global_plugins = ["api_auth"]
+
+[server]
+listen = "127.0.0.1:{PORT}"
+threads = 1
+
+[plugins.api_auth]
+category = "key_auth"
+header = "Authorization"
+strip_prefix = "Bearer "
+keys = ["test-key-123"]
+
+[plugins.compactor]
+category = "auto_compaction"
+threshold_tokens = 50
+strategy = "truncate"
+preserve_system = true
+min_messages = 1
+
+[providers.mock_openai]
+kind = "openai"
+base_url = "{MOCK_URL}"
+api_key = "fake-key"
+
+[[routes]]
+path = "/v1/chat/completions"
+provider = "mock_openai"
+plugins = ["compactor"]
+"#;
+
+const COMPACT_SLIDING_CONFIG: &str = r#"
+global_plugins = ["api_auth"]
+
+[server]
+listen = "127.0.0.1:{PORT}"
+threads = 1
+
+[plugins.api_auth]
+category = "key_auth"
+header = "Authorization"
+strip_prefix = "Bearer "
+keys = ["test-key-123"]
+
+[plugins.compactor]
+category = "auto_compaction"
+threshold_tokens = 100000
+strategy = "sliding_window"
+window_size = 3
+preserve_system = true
+
+[providers.mock_openai]
+kind = "openai"
+base_url = "{MOCK_URL}"
+api_key = "fake-key"
+
+[[routes]]
+path = "/v1/chat/completions"
+provider = "mock_openai"
+plugins = ["compactor"]
+"#;
+
+const COMPACT_NO_TRIGGER_CONFIG: &str = r#"
+global_plugins = ["api_auth"]
+
+[server]
+listen = "127.0.0.1:{PORT}"
+threads = 1
+
+[plugins.api_auth]
+category = "key_auth"
+header = "Authorization"
+strip_prefix = "Bearer "
+keys = ["test-key-123"]
+
+[plugins.compactor]
+category = "auto_compaction"
+threshold_tokens = 100000
+strategy = "truncate"
+preserve_system = true
+
+[providers.mock_openai]
+kind = "openai"
+base_url = "{MOCK_URL}"
+api_key = "fake-key"
+
+[[routes]]
+path = "/v1/chat/completions"
+provider = "mock_openai"
+plugins = ["compactor"]
+"#;
+
+/// Build a request body with many messages to exceed the threshold.
+fn long_chat_body(model: &str) -> Value {
+    let mut messages = vec![json!({"role": "system", "content": "You are a helpful assistant."})];
+    for i in 0..10 {
+        messages.push(json!({"role": "user", "content": format!("This is user message number {i} with some padding text to increase token count.")}));
+        messages.push(json!({"role": "assistant", "content": format!("This is assistant reply number {i} with some padding text to increase token count.")}));
+    }
+    json!({"model": model, "messages": messages})
+}
+
+#[tokio::test]
+async fn test_compaction_truncate_reduces_messages() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response("ok")))
+        .mount(&mock)
+        .await;
+
+    let gw = TestGateway::start(COMPACT_TRUNCATE_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let body = long_chat_body("gpt-4o");
+    let original_count = body["messages"].as_array().unwrap().len();
+
+    let resp = c
+        .post(gw.url("/v1/chat/completions"))
+        .header("Authorization", "Bearer test-key-123")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Inspect what the gateway actually forwarded to the upstream.
+    let requests = mock.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+
+    let upstream_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("upstream body is valid JSON");
+    let upstream_messages = upstream_body["messages"].as_array().unwrap();
+
+    // Compaction should have reduced the message count.
+    assert!(
+        upstream_messages.len() < original_count,
+        "expected messages to be truncated: original={original_count}, got={}",
+        upstream_messages.len()
+    );
+
+    // System message must be preserved.
+    assert_eq!(
+        upstream_messages[0]["role"].as_str().unwrap(),
+        "system",
+        "system message should be first"
+    );
+}
+
+#[tokio::test]
+async fn test_compaction_sliding_window_keeps_last_n() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response("ok")))
+        .mount(&mock)
+        .await;
+
+    // window_size = 3, preserve_system = true
+    let gw = TestGateway::start(COMPACT_SLIDING_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let body = long_chat_body("gpt-4o");
+
+    let resp = c
+        .post(gw.url("/v1/chat/completions"))
+        .header("Authorization", "Bearer test-key-123")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let requests = mock.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+
+    let upstream_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("upstream body is valid JSON");
+    let upstream_messages = upstream_body["messages"].as_array().unwrap();
+
+    // 1 system + 3 non-system = 4 total
+    assert_eq!(
+        upstream_messages.len(),
+        4,
+        "expected 1 system + 3 window messages, got {}",
+        upstream_messages.len()
+    );
+
+    // System message preserved first.
+    assert_eq!(upstream_messages[0]["role"].as_str().unwrap(), "system");
+
+    // The last 3 non-system messages should be the most recent ones.
+    let last_user = upstream_messages
+        .iter()
+        .filter(|m| m["role"].as_str() == Some("user"))
+        .last()
+        .unwrap();
+    let content = last_user["content"].as_str().unwrap();
+    assert!(
+        content.contains("9"),
+        "last kept user message should be from turn 9, got: {content}"
+    );
+}
+
+#[tokio::test]
+async fn test_compaction_not_triggered_below_threshold() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response("ok")))
+        .mount(&mock)
+        .await;
+
+    // threshold_tokens = 100000 — a single short message won't trigger it.
+    let gw = TestGateway::start(COMPACT_NO_TRIGGER_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let body = json!({
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hi"}
+        ]
+    });
+
+    let resp = c
+        .post(gw.url("/v1/chat/completions"))
+        .header("Authorization", "Bearer test-key-123")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let requests = mock.received_requests().await.unwrap();
+    let upstream_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("upstream body is valid JSON");
+
+    // All 2 messages should be forwarded unchanged.
+    assert_eq!(upstream_body["messages"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_compaction_skip_header_disables_compaction() {
+    let mock = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(openai_response("ok")))
+        .mount(&mock)
+        .await;
+
+    // threshold = 50 tokens — would normally trigger compaction.
+    let gw = TestGateway::start(COMPACT_TRUNCATE_CONFIG, &mock.uri()).await;
+    let c = client();
+
+    let body = long_chat_body("gpt-4o");
+    let original_count = body["messages"].as_array().unwrap().len();
+
+    let resp = c
+        .post(gw.url("/v1/chat/completions"))
+        .header("Authorization", "Bearer test-key-123")
+        .header("X-MaxLLM-No-Compact", "true")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let requests = mock.received_requests().await.unwrap();
+    let upstream_body: Value =
+        serde_json::from_slice(&requests[0].body).expect("upstream body is valid JSON");
+    let upstream_count = upstream_body["messages"].as_array().unwrap().len();
+
+    // All messages should be forwarded — compaction was skipped.
+    assert_eq!(
+        upstream_count, original_count,
+        "expected all {original_count} messages to be forwarded when skip header is set, got {upstream_count}"
+    );
+}

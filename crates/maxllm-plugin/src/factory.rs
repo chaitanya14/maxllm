@@ -29,6 +29,9 @@ pub fn create_plugin(name: &str, config: &toml::Table) -> Result<Arc<dyn Plugin>
         .ok_or(PluginError::MissingCategory)?;
 
     match category {
+        "auto_compaction" => Ok(Arc::new(builtin::AutoCompactionPlugin::from_config(
+            name, config,
+        )?)),
         "key_auth" => Ok(Arc::new(builtin::KeyAuthPlugin::from_config(name, config)?)),
         "rate_limit" => Ok(Arc::new(builtin::RateLimitPlugin::from_config(
             name, config,
