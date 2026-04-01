@@ -246,6 +246,305 @@ impl Plugin for AutoCompactionPlugin {
     }
 }
 
+/// Parameters for the auto-compaction body transformation.
+pub struct CompactionParams<'a> {
+    pub strategy: &'a str,
+    pub threshold: usize,
+    pub window_size: usize,
+    pub preserve_system: bool,
+    pub min_messages: usize,
+    pub llm_provider: Option<&'a str>,
+    pub llm_model: Option<&'a str>,
+}
+
+/// Data needed to perform an async LLM summarization call.
+pub struct LlmCompactionData {
+    pub provider: String,
+    pub model: String,
+    pub summary_text: String,
+    pub system_messages: Vec<serde_json::Value>,
+    pub to_keep: Vec<serde_json::Value>,
+}
+
+/// Result of a synchronous `compact_messages` call.
+pub enum CompactionResult {
+    /// No compaction was needed.
+    NoOp,
+    /// Body was compacted in-place (truncate or sliding_window strategy).
+    Compacted,
+    /// LLM strategy: an async summarization call is required.
+    NeedsLlm(LlmCompactionData),
+}
+
+/// Separate messages into (system, non_system) depending on `preserve_system`.
+fn separate_system_messages(
+    messages: Vec<serde_json::Value>,
+    preserve_system: bool,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    if preserve_system {
+        let mut system = Vec::new();
+        let non_system = messages
+            .into_iter()
+            .filter(|m| {
+                if m.get("role").and_then(|r| r.as_str()) == Some("system") {
+                    system.push(m.clone());
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+        (system, non_system)
+    } else {
+        (Vec::new(), messages)
+    }
+}
+
+/// Apply auto-compaction to an OpenAI-format request body.
+///
+/// Returns `CompactionResult::NoOp` when no action is needed,
+/// `CompactionResult::Compacted` when the body was modified in-place, or
+/// `CompactionResult::NeedsLlm` when the LLM strategy requires an async call.
+pub fn compact_messages(
+    body: &mut serde_json::Value,
+    params: CompactionParams<'_>,
+) -> CompactionResult {
+    let CompactionParams {
+        strategy,
+        threshold,
+        window_size,
+        preserve_system,
+        min_messages,
+        llm_provider,
+        llm_model,
+    } = params;
+
+    let messages = match body.get("messages").and_then(|m| m.as_array()) {
+        Some(m) => m.clone(),
+        None => return CompactionResult::NoOp,
+    };
+
+    match strategy {
+        "truncate" => {
+            let total_tokens = AutoCompactionPlugin::estimate_body_tokens(body);
+            if total_tokens <= threshold {
+                return CompactionResult::NoOp;
+            }
+
+            let (system_messages, non_system) = separate_system_messages(messages, preserve_system);
+
+            let mut kept: Vec<serde_json::Value> = Vec::new();
+            let mut tokens: usize = system_messages
+                .iter()
+                .map(AutoCompactionPlugin::estimate_message_tokens)
+                .sum();
+
+            for msg in non_system.iter().rev() {
+                let msg_tokens = AutoCompactionPlugin::estimate_message_tokens(msg);
+                if tokens + msg_tokens <= threshold || kept.len() < min_messages {
+                    tokens += msg_tokens;
+                    kept.push(msg.clone());
+                }
+            }
+            kept.reverse();
+
+            let dropped = non_system.len().saturating_sub(kept.len());
+            if dropped == 0 {
+                return CompactionResult::NoOp;
+            }
+
+            let mut final_messages = system_messages;
+            final_messages.extend(kept);
+            body["messages"] = serde_json::Value::Array(final_messages);
+
+            tracing::info!(
+                strategy = "truncate",
+                dropped = dropped,
+                estimated_tokens = tokens,
+                threshold = threshold,
+                "auto-compaction: truncated message history"
+            );
+            CompactionResult::Compacted
+        }
+
+        "sliding_window" => {
+            if messages.len() <= window_size {
+                return CompactionResult::NoOp;
+            }
+
+            let (system_messages, non_system) = separate_system_messages(messages, preserve_system);
+
+            if non_system.len() <= window_size {
+                return CompactionResult::NoOp;
+            }
+
+            let dropped = non_system.len() - window_size;
+            let kept: Vec<serde_json::Value> = non_system.into_iter().skip(dropped).collect();
+
+            let mut final_messages = system_messages;
+            final_messages.extend(kept);
+            body["messages"] = serde_json::Value::Array(final_messages);
+
+            tracing::info!(
+                strategy = "sliding_window",
+                dropped = dropped,
+                window_size = window_size,
+                "auto-compaction: applied sliding window"
+            );
+            CompactionResult::Compacted
+        }
+
+        "llm" => {
+            let total_tokens = AutoCompactionPlugin::estimate_body_tokens(body);
+            if total_tokens <= threshold {
+                return CompactionResult::NoOp;
+            }
+
+            let provider = match llm_provider {
+                Some(p) => p,
+                None => {
+                    tracing::warn!(
+                        "auto-compaction strategy=llm but no summarize_provider configured"
+                    );
+                    return CompactionResult::NoOp;
+                }
+            };
+            let model = match llm_model {
+                Some(m) => m,
+                None => {
+                    tracing::warn!(
+                        "auto-compaction strategy=llm but no summarize_model configured"
+                    );
+                    return CompactionResult::NoOp;
+                }
+            };
+
+            let (system_messages, non_system) = separate_system_messages(messages, preserve_system);
+
+            if non_system.len() <= min_messages {
+                return CompactionResult::NoOp;
+            }
+
+            let keep_count = (non_system.len() / 2).max(min_messages);
+            let to_summarize = &non_system[..non_system.len() - keep_count];
+            let to_keep = non_system[non_system.len() - keep_count..].to_vec();
+
+            let summary_text: String = to_summarize
+                .iter()
+                .filter_map(|m| {
+                    let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
+                    let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                    if content.is_empty() {
+                        None
+                    } else {
+                        Some(format!("{role}: {content}"))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            CompactionResult::NeedsLlm(LlmCompactionData {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                summary_text,
+                system_messages,
+                to_keep,
+            })
+        }
+
+        _ => CompactionResult::NoOp,
+    }
+}
+
+/// Complete the LLM compaction strategy by calling the summarization provider.
+///
+/// The `api_key` and `base_url` should come from the provider config; the caller
+/// is responsible for resolving them (falling back to env vars if needed).
+/// `client` should be a long-lived shared `reqwest::Client`.
+///
+/// Returns `true` if the body was modified.
+pub async fn apply_llm_compaction(
+    body: &mut serde_json::Value,
+    data: LlmCompactionData,
+    api_key: &str,
+    base_url: &str,
+    client: &reqwest::Client,
+) -> bool {
+    let LlmCompactionData {
+        provider,
+        model,
+        summary_text,
+        system_messages,
+        to_keep,
+    } = data;
+
+    let request_body = serde_json::json!({
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a concise conversation summarizer. Summarize the following conversation history into a brief paragraph capturing the key context and decisions. Be factual and concise."
+            },
+            {
+                "role": "user",
+                "content": format!("Summarize this conversation:\n\n{summary_text}")
+            }
+        ],
+        "max_tokens": 512
+    });
+
+    let resp = client
+        .post(format!("{base_url}/v1/chat/completions"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await;
+
+    let summary = match resp {
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(json) => json
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c| c.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .map(String::from),
+            Err(e) => {
+                tracing::warn!(error = %e, "auto-compaction: failed to parse LLM response");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, provider = provider.as_str(), model = model.as_str(), "auto-compaction: LLM summarization call failed");
+            None
+        }
+    };
+
+    let summary = match summary {
+        Some(s) => s,
+        None => return false,
+    };
+
+    let summary_message = serde_json::json!({
+        "role": "assistant",
+        "content": format!("[Summary of earlier conversation]\n{summary}")
+    });
+
+    let mut final_messages = system_messages;
+    final_messages.push(summary_message);
+    final_messages.extend(to_keep);
+    body["messages"] = serde_json::Value::Array(final_messages);
+
+    tracing::info!(
+        strategy = "llm",
+        provider = provider.as_str(),
+        model = model.as_str(),
+        "auto-compaction: summarized message history via LLM"
+    );
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

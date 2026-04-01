@@ -15,6 +15,9 @@ use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use maxllm_config::{Config, EndpointType, ProviderKind, RouteConfig};
+use maxllm_plugin::builtin::auto_compaction::{
+    apply_llm_compaction, compact_messages, CompactionParams, CompactionResult,
+};
 use maxllm_plugin::guardrail::{
     self, GuardrailEngine, GuardrailInput, GuardrailOutput, GuardrailVerdict,
 };
@@ -26,6 +29,14 @@ use pingora::proxy::{ProxyHttp, Session};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+/// Shared HTTP client for LLM-based auto-compaction summarization calls.
+static LLM_HTTP_CLIENT: once_cell::sync::Lazy<reqwest::Client> = once_cell::sync::Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("reqwest client init failed")
+});
 
 /// Well-known models for each provider kind.
 fn well_known_models(kind: ProviderKind) -> &'static [&'static str] {
@@ -355,17 +366,6 @@ pub fn build_hot_state(config: &Config) -> Result<HotState, Box<dyn std::error::
     })
 }
 
-/// Parameters for the auto-compaction body transformation.
-struct CompactionParams<'a> {
-    strategy: &'a str,
-    threshold: usize,
-    window_size: usize,
-    preserve_system: bool,
-    min_messages: usize,
-    llm_provider: Option<&'a str>,
-    llm_model: Option<&'a str>,
-}
-
 impl AiGateway {
     pub fn new(config: &Config) -> Result<Self, Box<dyn std::error::Error>> {
         let hot_state = build_hot_state(config)?;
@@ -510,338 +510,6 @@ impl AiGateway {
             .get(model)
             .cloned()
             .unwrap_or_else(|| model.to_string())
-    }
-
-    /// Apply auto-compaction to an OpenAI-format request body.
-    /// Returns true if the body was modified.
-    fn apply_compaction(body: &mut serde_json::Value, params: CompactionParams<'_>) -> bool {
-        let CompactionParams {
-            strategy,
-            threshold,
-            window_size,
-            preserve_system,
-            min_messages,
-            llm_provider,
-            llm_model,
-        } = params;
-        use maxllm_plugin::builtin::auto_compaction::AutoCompactionPlugin;
-
-        let messages = match body.get("messages").and_then(|m| m.as_array()) {
-            Some(m) => m.clone(),
-            None => return false,
-        };
-
-        match strategy {
-            "truncate" => {
-                let total_tokens = AutoCompactionPlugin::estimate_body_tokens(body);
-                if total_tokens <= threshold {
-                    return false;
-                }
-
-                let mut kept: Vec<serde_json::Value> = Vec::new();
-                let mut system_messages: Vec<serde_json::Value> = Vec::new();
-
-                // Separate system messages if preserve_system is on.
-                let non_system: Vec<serde_json::Value> = if preserve_system {
-                    messages
-                        .into_iter()
-                        .filter(|m| {
-                            if m.get("role").and_then(|r| r.as_str()) == Some("system") {
-                                system_messages.push(m.clone());
-                                false
-                            } else {
-                                true
-                            }
-                        })
-                        .collect()
-                } else {
-                    messages
-                };
-
-                // Drop oldest non-system messages until under threshold.
-                let mut tokens: usize = system_messages
-                    .iter()
-                    .map(AutoCompactionPlugin::estimate_message_tokens)
-                    .sum();
-
-                // Walk from newest to oldest, keep until budget is filled.
-                for msg in non_system.iter().rev() {
-                    let msg_tokens = AutoCompactionPlugin::estimate_message_tokens(msg);
-                    if tokens + msg_tokens <= threshold || kept.len() < min_messages {
-                        tokens += msg_tokens;
-                        kept.push(msg.clone());
-                    }
-                }
-                kept.reverse();
-
-                let dropped = non_system.len().saturating_sub(kept.len());
-                if dropped == 0 {
-                    return false;
-                }
-
-                let mut final_messages = system_messages;
-                final_messages.extend(kept);
-                body["messages"] = serde_json::Value::Array(final_messages);
-
-                tracing::info!(
-                    strategy = "truncate",
-                    dropped = dropped,
-                    estimated_tokens = tokens,
-                    threshold = threshold,
-                    "auto-compaction: truncated message history"
-                );
-                true
-            }
-
-            "sliding_window" => {
-                if messages.len() <= window_size {
-                    return false;
-                }
-
-                let mut system_messages: Vec<serde_json::Value> = Vec::new();
-                let non_system: Vec<serde_json::Value> = if preserve_system {
-                    messages
-                        .into_iter()
-                        .filter(|m| {
-                            if m.get("role").and_then(|r| r.as_str()) == Some("system") {
-                                system_messages.push(m.clone());
-                                false
-                            } else {
-                                true
-                            }
-                        })
-                        .collect()
-                } else {
-                    messages
-                };
-
-                if non_system.len() <= window_size {
-                    return false;
-                }
-
-                let dropped = non_system.len() - window_size;
-                let kept: Vec<serde_json::Value> = non_system.into_iter().skip(dropped).collect();
-
-                let mut final_messages = system_messages;
-                final_messages.extend(kept);
-                body["messages"] = serde_json::Value::Array(final_messages);
-
-                tracing::info!(
-                    strategy = "sliding_window",
-                    dropped = dropped,
-                    window_size = window_size,
-                    "auto-compaction: applied sliding window"
-                );
-                true
-            }
-
-            "llm" => {
-                let total_tokens = AutoCompactionPlugin::estimate_body_tokens(body);
-                if total_tokens <= threshold {
-                    return false;
-                }
-
-                let provider = match llm_provider {
-                    Some(p) => p,
-                    None => {
-                        tracing::warn!(
-                            "auto-compaction strategy=llm but no summarize_provider configured"
-                        );
-                        return false;
-                    }
-                };
-                let model = match llm_model {
-                    Some(m) => m,
-                    None => {
-                        tracing::warn!(
-                            "auto-compaction strategy=llm but no summarize_model configured"
-                        );
-                        return false;
-                    }
-                };
-
-                // Separate system and non-system messages.
-                let mut system_messages: Vec<serde_json::Value> = Vec::new();
-                let non_system: Vec<serde_json::Value> = if preserve_system {
-                    messages
-                        .into_iter()
-                        .filter(|m| {
-                            if m.get("role").and_then(|r| r.as_str()) == Some("system") {
-                                system_messages.push(m.clone());
-                                false
-                            } else {
-                                true
-                            }
-                        })
-                        .collect()
-                } else {
-                    messages
-                };
-
-                if non_system.len() <= min_messages {
-                    return false;
-                }
-
-                // Split: older messages to summarize, recent messages to keep.
-                let keep_count = (non_system.len() / 2).max(min_messages);
-                let to_summarize = &non_system[..non_system.len() - keep_count];
-                let to_keep = &non_system[non_system.len() - keep_count..];
-
-                // Build text of messages to summarize.
-                let summary_text: String = to_summarize
-                    .iter()
-                    .filter_map(|m| {
-                        let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
-                        let content = m.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                        if content.is_empty() {
-                            None
-                        } else {
-                            Some(format!("{role}: {content}"))
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                // The llm strategy stores provider/model; actual async HTTP call
-                // is handled by apply_compaction_llm which is called from the
-                // async gateway context. Signal via a sentinel value so the caller
-                // knows to run the async path.
-                //
-                // We store the text to summarize and relevant params in the body
-                // as a temporary side-channel field that the async caller will pick up.
-                body["__compact_summarize"] = serde_json::json!({
-                    "provider": provider,
-                    "model": model,
-                    "text": summary_text,
-                    "system_messages": system_messages,
-                    "to_keep": to_keep,
-                });
-                true
-            }
-
-            _ => false,
-        }
-    }
-
-    /// Complete the LLM compaction strategy by calling the summarization provider.
-    /// Called from the async request_body_filter after apply_compaction signals via
-    /// the `__compact_summarize` sentinel field.
-    async fn apply_compaction_llm(body: &mut serde_json::Value) -> bool {
-        let params = match body.get("__compact_summarize").cloned() {
-            Some(p) => p,
-            None => return false,
-        };
-
-        // Remove sentinel field regardless of outcome.
-        if let Some(obj) = body.as_object_mut() {
-            obj.remove("__compact_summarize");
-        }
-
-        let provider = params
-            .get("provider")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let model = params.get("model").and_then(|v| v.as_str()).unwrap_or("");
-        let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        let system_messages = params
-            .get("system_messages")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let to_keep = params
-            .get("to_keep")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        let base_url =
-            std::env::var("MAXLLM_SUMMARIZE_BASE_URL").unwrap_or_else(|_| match provider {
-                "openai" => "https://api.openai.com".to_string(),
-                "anthropic" => "https://api.anthropic.com".to_string(),
-                "groq" => "https://api.groq.com/openai".to_string(),
-                _ => format!("https://api.{provider}.com"),
-            });
-
-        let api_key_env = format!("{}_API_KEY", provider.to_uppercase().replace('-', "_"));
-        let api_key = std::env::var(&api_key_env).unwrap_or_default();
-
-        let request_body = serde_json::json!({
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a concise conversation summarizer. Summarize the following conversation history into a brief paragraph capturing the key context and decisions. Be factual and concise."
-                },
-                {
-                    "role": "user",
-                    "content": format!("Summarize this conversation:\n\n{text}")
-                }
-            ],
-            "max_tokens": 512
-        });
-
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build();
-
-        let client = match client {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(error = %e, "auto-compaction: failed to build HTTP client");
-                return false;
-            }
-        };
-
-        let resp = client
-            .post(format!("{base_url}/v1/chat/completions"))
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("Content-Type", "application/json")
-            .json(&request_body)
-            .send()
-            .await;
-
-        let summary = match resp {
-            Ok(r) => match r.json::<serde_json::Value>().await {
-                Ok(json) => json
-                    .get("choices")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("message"))
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                    .map(String::from),
-                Err(e) => {
-                    tracing::warn!(error = %e, "auto-compaction: failed to parse LLM response");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!(error = %e, provider = provider, model = model, "auto-compaction: LLM summarization call failed");
-                None
-            }
-        };
-
-        let summary = match summary {
-            Some(s) => s,
-            None => return false,
-        };
-
-        let summary_message = serde_json::json!({
-            "role": "assistant",
-            "content": format!("[Summary of earlier conversation]\n{summary}")
-        });
-
-        let mut final_messages = system_messages;
-        final_messages.push(summary_message);
-        final_messages.extend(to_keep);
-        body["messages"] = serde_json::Value::Array(final_messages);
-
-        tracing::info!(
-            strategy = "llm",
-            provider = provider,
-            model = model,
-            "auto-compaction: summarized message history via LLM"
-        );
-        true
     }
 
     async fn send_error_response(
@@ -1188,7 +856,11 @@ impl ProxyHttp for AiGateway {
                 ctx.keep_request_content_length = true;
                 // Keep original Content-Length header (don't remove, don't set chunked)
             } else if is_body_passthrough && compaction_enabled {
-                // Compaction will modify the body, so body size changes — use chunked.
+                // Compaction will modify the body size. Transfer-Encoding: chunked is used
+                // because we cannot know the compacted Content-Length until after
+                // request_body_filter runs (headers are sent to upstream before body
+                // processing). OpenAI's documented HTTP/1.1 compliance requires accepting
+                // chunked encoding.
                 let _ = upstream_request.remove_header("Content-Length");
                 upstream_request.insert_header("Transfer-Encoding", "chunked")?;
             } else {
@@ -1570,7 +1242,7 @@ impl ProxyHttp for AiGateway {
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(2);
 
-                        let compacted = Self::apply_compaction(
+                        let result = compact_messages(
                             &mut body_json,
                             CompactionParams {
                                 strategy: &strategy,
@@ -1590,11 +1262,50 @@ impl ProxyHttp for AiGateway {
                                     .map(|s| s.as_str()),
                             },
                         );
-                        if compacted {
-                            // LLM strategy: complete the async summarization call.
-                            if body_json.get("__compact_summarize").is_some() {
-                                Self::apply_compaction_llm(&mut body_json).await;
+                        let modified = match result {
+                            CompactionResult::NoOp => false,
+                            CompactionResult::Compacted => true,
+                            CompactionResult::NeedsLlm(llm_data) => {
+                                // Resolve api_key and base_url from provider config,
+                                // falling back to env vars only when the provider is
+                                // not present in the gateway config.
+                                let llm_provider_name = &llm_data.provider;
+                                let (api_key, base_url) = if let Some(p) =
+                                    hot.providers.get(llm_provider_name)
+                                {
+                                    let scheme = if p.tls { "https" } else { "http" };
+                                    (
+                                        p.api_key.clone(),
+                                        format!("{scheme}://{}:{}", p.host, p.port),
+                                    )
+                                } else {
+                                    let api_key_env = format!(
+                                        "{}_API_KEY",
+                                        llm_provider_name.to_uppercase().replace('-', "_")
+                                    );
+                                    let api_key = std::env::var(&api_key_env).unwrap_or_default();
+                                    let base_url = std::env::var("MAXLLM_SUMMARIZE_BASE_URL")
+                                        .unwrap_or_else(|_| match llm_provider_name.as_str() {
+                                            "openai" => "https://api.openai.com".to_string(),
+                                            "anthropic" => "https://api.anthropic.com".to_string(),
+                                            "groq" => "https://api.groq.com/openai".to_string(),
+                                            other => {
+                                                format!("https://api.{other}.com")
+                                            }
+                                        });
+                                    (api_key, base_url)
+                                };
+                                apply_llm_compaction(
+                                    &mut body_json,
+                                    llm_data,
+                                    &api_key,
+                                    &base_url,
+                                    &LLM_HTTP_CLIENT,
+                                )
+                                .await
                             }
+                        };
+                        if modified {
                             ctx.request_body_buf = serde_json::to_vec(&body_json)
                                 .unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
                         }
