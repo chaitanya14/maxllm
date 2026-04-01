@@ -1266,43 +1266,35 @@ impl ProxyHttp for AiGateway {
                             CompactionResult::NoOp => false,
                             CompactionResult::Compacted => true,
                             CompactionResult::NeedsLlm(llm_data) => {
-                                // Resolve api_key and base_url from provider config,
-                                // falling back to env vars only when the provider is
-                                // not present in the gateway config.
-                                let llm_provider_name = &llm_data.provider;
-                                let (api_key, base_url) = if let Some(p) =
-                                    hot.providers.get(llm_provider_name)
-                                {
-                                    let scheme = if p.tls { "https" } else { "http" };
-                                    (
-                                        p.api_key.clone(),
-                                        format!("{scheme}://{}:{}", p.host, p.port),
-                                    )
-                                } else {
-                                    let api_key_env = format!(
-                                        "{}_API_KEY",
-                                        llm_provider_name.to_uppercase().replace('-', "_")
-                                    );
-                                    let api_key = std::env::var(&api_key_env).unwrap_or_default();
-                                    let base_url = std::env::var("MAXLLM_SUMMARIZE_BASE_URL")
-                                        .unwrap_or_else(|_| match llm_provider_name.as_str() {
-                                            "openai" => "https://api.openai.com".to_string(),
-                                            "anthropic" => "https://api.anthropic.com".to_string(),
-                                            "groq" => "https://api.groq.com/openai".to_string(),
-                                            other => {
-                                                format!("https://api.{other}.com")
-                                            }
-                                        });
-                                    (api_key, base_url)
-                                };
-                                apply_llm_compaction(
-                                    &mut body_json,
-                                    llm_data,
-                                    &api_key,
-                                    &base_url,
-                                    &LLM_HTTP_CLIENT,
-                                )
-                                .await
+                                // api_key and base_url must come from gateway provider config.
+                                // If the summarize_provider is not registered in [providers],
+                                // skip LLM compaction rather than silently reading env vars.
+                                match hot.providers.get(&llm_data.provider) {
+                                    Some(p) => {
+                                        let scheme = if p.tls { "https" } else { "http" };
+                                        let api_key = p.api_key.clone();
+                                        let base_url = format!("{scheme}://{}:{}", p.host, p.port);
+                                        apply_llm_compaction(
+                                            &mut body_json,
+                                            llm_data,
+                                            &api_key,
+                                            &base_url,
+                                            &LLM_HTTP_CLIENT,
+                                        )
+                                        .await
+                                    }
+                                    None => {
+                                        tracing::warn!(
+                                            provider = %llm_data.provider,
+                                            "auto-compaction: summarize_provider '{}' not found \
+                                             in gateway config; add a [providers.{}] section \
+                                             with api_key to enable LLM-based compaction",
+                                            llm_data.provider,
+                                            llm_data.provider
+                                        );
+                                        false
+                                    }
+                                }
                             }
                         };
                         if modified {
@@ -1372,9 +1364,10 @@ impl ProxyHttp for AiGateway {
             let _ = upstream_response.remove_header("Content-Length");
         }
 
-        // For error responses from non-OpenAI providers, remove Content-Length
-        // since the body will be normalized to OpenAI error format.
-        if status >= 400 && !skip_response_translation {
+        // Error responses (4xx/5xx) are always passed through normalize_error_response()
+        // which rewrites the body into OpenAI error format, changing the body size.
+        // Remove Content-Length unconditionally so we never mismatch the translated body.
+        if status >= 400 {
             let _ = upstream_response.remove_header("Content-Length");
         }
 
