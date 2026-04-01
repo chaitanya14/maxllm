@@ -1362,8 +1362,7 @@ async fn test_compaction_sliding_window_keeps_last_n() {
     // The last 3 non-system messages should be the most recent ones.
     let last_user = upstream_messages
         .iter()
-        .filter(|m| m["role"].as_str() == Some("user"))
-        .next_back()
+        .rfind(|m| m["role"].as_str() == Some("user"))
         .unwrap();
     let content = last_user["content"].as_str().unwrap();
     assert!(
