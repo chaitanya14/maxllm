@@ -713,7 +713,7 @@ impl ProxyHttp for AiGateway {
 
     async fn upstream_peer(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Box<HttpPeer>> {
         let hot = self.hot.load();
@@ -856,13 +856,21 @@ impl ProxyHttp for AiGateway {
                 ctx.keep_request_content_length = true;
                 // Keep original Content-Length header (don't remove, don't set chunked)
             } else if is_body_passthrough && compaction_enabled {
-                // Compaction will modify the body size. Transfer-Encoding: chunked is used
-                // because we cannot know the compacted Content-Length until after
-                // request_body_filter runs (headers are sent to upstream before body
-                // processing). OpenAI's documented HTTP/1.1 compliance requires accepting
-                // chunked encoding.
-                let _ = upstream_request.remove_header("Content-Length");
-                upstream_request.insert_header("Transfer-Encoding", "chunked")?;
+                // Compaction will modify the body but OpenAI/Cloudflare rejects
+                // Transfer-Encoding: chunked. Strategy: keep the ORIGINAL
+                // Content-Length, then in request_body_filter, pad the compacted
+                // body with spaces to match the original size. JSON parsers
+                // ignore trailing whitespace, so the upstream sees valid JSON.
+                ctx.keep_request_content_length = true;
+                // Store original Content-Length for padding target
+                if let Some(cl) = upstream_request.headers.get("Content-Length") {
+                    if let Ok(cl_str) = cl.to_str() {
+                        ctx.plugin_ctx.extensions.insert(
+                            "original_content_length".into(),
+                            cl_str.to_string(),
+                        );
+                    }
+                }
             } else {
                 let _ = upstream_request.remove_header("Content-Length");
                 upstream_request.insert_header("Transfer-Encoding", "chunked")?;
@@ -887,7 +895,7 @@ impl ProxyHttp for AiGateway {
 
     async fn request_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
@@ -1062,7 +1070,7 @@ impl ProxyHttp for AiGateway {
                             } = verdict
                             {
                                 return self
-                                    .send_guardrail_block(_session, ctx, guardrail, reason)
+                                    .send_guardrail_block(session, ctx, guardrail, reason)
                                     .await;
                             }
                         }
@@ -1138,7 +1146,7 @@ impl ProxyHttp for AiGateway {
                                     ref reason,
                                 } => {
                                     return self
-                                        .send_guardrail_block(_session, ctx, guardrail, reason)
+                                        .send_guardrail_block(session, ctx, guardrail, reason)
                                         .await;
                                 }
                                 GuardrailVerdict::Modify {
@@ -1200,6 +1208,7 @@ impl ProxyHttp for AiGateway {
                 }
 
                 // ── AUTO-COMPACTION ──
+                let mut compaction_modified = false;
                 if ctx
                     .plugin_ctx
                     .extensions
@@ -1300,6 +1309,23 @@ impl ProxyHttp for AiGateway {
                         if modified {
                             ctx.request_body_buf = serde_json::to_vec(&body_json)
                                 .unwrap_or_else(|_| std::mem::take(&mut ctx.request_body_buf));
+
+                            // For OpenAI passthrough with compaction, the Content-Length
+                            // header was already sent with the original body size.
+                            // Pad the compacted body with spaces to match, so the
+                            // upstream reads exactly Content-Length bytes. JSON parsers
+                            // ignore trailing whitespace.
+                            if let Some(original_cl) = ctx.plugin_ctx.extensions
+                                .get("original_content_length")
+                                .and_then(|s| s.parse::<usize>().ok())
+                            {
+                                if ctx.request_body_buf.len() < original_cl {
+                                    let padding = original_cl - ctx.request_body_buf.len();
+                                    ctx.request_body_buf.extend(
+                                        std::iter::repeat(b' ').take(padding)
+                                    );
+                                }
+                            }
                         }
                     }
                 }
