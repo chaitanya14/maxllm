@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MaxLLM Gateway</title>
+    <meta
+      name="description"
+      content="MaxLLM — a Rust + Pingora AI gateway: single SDK, 15 providers, plugin-driven routing, guardrails, and ultra-low proxy overhead."
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #030712;
+        --surface: #0d111d;
+        --muted: #5a6978;
+        --accent: #ff6a3d;
+        --accent-soft: rgba(255, 106, 61, 0.1);
+        --border: rgba(255, 255, 255, 0.08);
+        font-family: "Inter", "SF Pro Display", system-ui, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top, rgba(255, 106, 61, 0.15), transparent 50%),
+          var(--bg);
+        color: #f3f6fb;
+        min-height: 100vh;
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 3rem 1.5rem 4rem;
+      }
+      header {
+        padding-bottom: 2rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.3em;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      h1 {
+        font-size: clamp(2.5rem, 4vw, 3.5rem);
+        margin: 0.5rem 0;
+        line-height: 1.1;
+      }
+      p.lead {
+        font-size: 1.15rem;
+        color: #dfe7ff;
+        max-width: 720px;
+        margin-bottom: 1.5rem;
+      }
+      .hero-actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+      }
+      .hero-actions a {
+        padding: 0.85rem 1.4rem;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 0.95rem;
+        transition: transform 200ms ease, box-shadow 200ms ease;
+      }
+      .button-primary {
+        background: var(--accent);
+        color: #050509;
+        box-shadow: 0 10px 30px rgba(255, 106, 61, 0.3);
+      }
+      .button-primary:hover {
+        transform: translateY(-2px);
+      }
+      .button-secondary {
+        border: 1px solid var(--border);
+        color: #f3f6fb;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-top: 2rem;
+      }
+      .stat-card {
+        padding: 1.25rem;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--border);
+      }
+      .stat-card strong {
+        font-size: 1.8rem;
+      }
+      section {
+        margin-top: 3rem;
+      }
+      section h2 {
+        font-size: 1.6rem;
+        margin-bottom: 1rem;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+      }
+      .card {
+        background: var(--surface);
+        border-radius: 16px;
+        padding: 1.5rem;
+        border: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+      }
+      .card h3 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.98rem;
+      }
+      .pill {
+        display: inline-flex;
+        padding: 0.1rem 0.7rem;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: #ffc49c;
+        font-size: 0.9rem;
+        border: 1px solid rgba(255, 106, 61, 0.4);
+      }
+      .table-wrapper {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.95rem;
+      }
+      table th,
+      table td {
+        padding: 0.65rem 0.5rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        text-align: left;
+      }
+      table th {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      pre {
+        margin: 0;
+        background: #010409;
+        padding: 1rem;
+        border-radius: 12px;
+        overflow-x: auto;
+        font-size: 0.9rem;
+      }
+      code {
+        color: #ffb86c;
+      }
+      .architect {
+        margin-top: 2rem;
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        position: relative;
+        padding-bottom: 0.5rem;
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .architect img {
+        width: 100%;
+        display: block;
+      }
+      footer {
+        margin-top: 4rem;
+        padding-top: 2rem;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      @media (max-width: 600px) {
+        .hero-actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">MaxLLM · 📡 Rust + Pingora</p>
+        <h1>High-performance AI gateway with OpenAI compatibility.</h1>
+        <p class="lead">
+          MaxLLM keeps your OpenAI clients intact while routing traffic to any provider, applying
+          plugins, guardrails, and multi-tenant controls—all inside a single Pingora-powered reverse
+          proxy.
+        </p>
+        <div class="hero-actions">
+          <a class="button-primary" href="https://github.com/chaitanya14/maxllm" target="_blank" rel="noreferrer"
+            >View on GitHub</a
+          >
+          <a class="button-secondary" href="https://github.com/chaitanya14/maxllm#getting-started" target="_blank" rel="noreferrer">
+            Read Getting Started</a
+          >
+        </div>
+        <div class="stats">
+          <div class="stat-card">
+            <p class="pill">15 providers</p>
+            <strong>All the big names</strong>
+            <p>OpenAI, Anthropic, Gemini, Ollama, Cohere, Bedrock, xAI, and any OpenAI-compatible host.</p>
+          </div>
+          <div class="stat-card">
+            <p class="pill">7 crates</p>
+            <strong>Modular Rust</strong>
+            <p>Config, plugin, translate, admin, and gateway crates keep concerns clean.</p>
+          </div>
+          <div class="stat-card">
+            <p class="pill">13 plugins</p>
+            <strong>Extensible hooks</strong>
+            <p>Auth, rate limits, CORS, caching, guardrails, and more in one chain.</p>
+          </div>
+        </div>
+      </header>
+
+      <section id="features">
+        <h2>Why teams pick MaxLLM</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Zero API changes</h3>
+            <p>Keep using OpenAI SDKs—MaxLLM translates requests to native providers and back.</p>
+          </article>
+          <article class="card">
+            <h3>Smart routing</h3>
+            <p>Fallback chains, weighted and round-robin balancing, least-connections, and lock-free circuit
+              breakers keep traffic flowing.</p>
+          </article>
+          <article class="card">
+            <h3>Guardrails & plugins</h3>
+            <p>Prompt guards, keyword blocks, secret scanning, regex rules, and external webhooks apply before
+              requests leave the gateway.</p>
+          </article>
+          <article class="card">
+            <h3>Virtual keys & observability</h3>
+            <p>Multi-tenant keys, per-key budgets, rate limits, cost tracking, and Prometheus metrics shipped
+              out of the box.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="getting-started">
+        <h2>Getting started</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Docker (recommended)</h3>
+            <p>Pull `chaitanyadev14/maxllm:latest`, mount `maxllm.toml`, and inject provider API keys via env
+              vars.</p>
+          </article>
+          <article class="card">
+            <h3>CLI</h3>
+            <pre><code>cargo build --release
+./target/release/maxllm init
+./target/release/maxllm start</code></pre>
+            <p>Use the CLI for status, config dumps, and virtual key management.</p>
+          </article>
+          <article class="card">
+            <h3>Build from source</h3>
+            <pre><code>cargo build --release
+./target/release/maxllm-server --config maxllm.toml</code></pre>
+            <p>Run the server binary directly when you need ultra-low-latency control.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="providers">
+        <h2>Supported providers</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Mode</th>
+                <th>Auth</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>OpenAI</td><td>OpenAI-compatible</td><td>Bearer token</td></tr>
+              <tr><td>Anthropic</td><td>Translation → Messages API</td><td>x-api-key</td></tr>
+              <tr><td>Google Gemini</td><td>Translation → generateContent</td><td>API key query</td></tr>
+              <tr><td>Azure OpenAI</td><td>Passthrough</td><td>api-key header</td></tr>
+              <tr><td>AWS Bedrock</td><td>Anthropic format</td><td>AWS SigV4</td></tr>
+              <tr><td>Groq, Together, Fireworks, DeepInfra, Mistral, xAI, DeepSeek, Cohere, Ollama</td><td>OpenAI-compatible</td><td>Bearer token / local</td></tr>
+              <tr><td>Custom</td><td>OpenAI-compatible</td><td>Configurable</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="configuration">
+        <h2>Configuration & routes</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Providers & model aliases</h3>
+            <p>Configure each provider in `maxllm.toml`, declare defaults, and alias models (e.g., `"gpt-4" = "gpt-4o"`).</p>
+          </article>
+          <article class="card">
+            <h3>Routes</h3>
+            <p>Define translated, native, or passthrough paths with plugins, guardrails, timeouts, and fallbacks per
+              route.</p>
+          </article>
+          <article class="card">
+            <h3>Plugins</h3>
+            <p>Global hooks such as `request_id`, `api_auth`, rate limiting, caching, and PII detection can be
+              wired per route.</p>
+          </article>
+          <article class="card">
+            <h3>Guardrails</h3>
+            <p>Battle-tested providers like prompt guard, keyword block, regex guard, Lakera, and programmable CEL
+              policies drop into every route.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="virtual-keys">
+        <h2>Virtual keys & admin</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Multi-tenancy</h3>
+            <p>Admin API generates `sk-maxllm-{uuid}` keys with teams, per-key budgets, and rate limits.</p>
+          </article>
+          <article class="card">
+            <h3>Cost tracking</h3>
+            <p>Automatic per-key, per-provider, per-model spend tracking with `/admin/spend` reports.</p>
+          </article>
+          <article class="card">
+            <h3>Observability</h3>
+            <p>Prometheus metrics plus response headers (`X-MaxLLM-Provider`, `X-MaxLLM-Overhead-Ms`, etc.).</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="architect">
+        <h2 style="padding: 1.5rem 1.5rem 0; margin: 0;">Architecture</h2>
+        <p style="padding: 0 1.5rem; color: var(--muted);">Pingora handles TCP/TLS while MaxLLM focuses on translation, routing, and policy enforcement.</p>
+        <img src="architecture.svg" alt="MaxLLM Gateway Architecture" />
+      </section>
+
+      <section id="performance">
+        <h2>Performance</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>Raw throughput</h3>
+            <p>178k req/sec on `/health` with 980µs average latency; 71k req/sec proxying to a mock upstream.</p>
+          </article>
+          <article class="card">
+            <h3>LiteLLM comparison</h3>
+            <p>33.8× more requests/sec with 36× lower latency on identical hardware. Benchmarks live in
+              <code>BENCHMARKS.md</code>.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="getting-involved">
+        <h2>Development workflow</h2>
+        <p style="color: var(--muted);">Targets are exposed via the Makefile (build, run, dev, test, perf). Lints and checks keep the 257 tests and 44/44 bug hunt clean.</p>
+        <p style="color: var(--muted);">Need help? Run `make dev` locally, peek at `maxllm.toml`, and drop config questions in the repo issues.</p>
+      </section>
+
+      <footer>
+        <p>Apache 2.0 · Built on Pingora · Source: <a href="https://github.com/chaitanya14/maxllm" style="color: var(--accent);">GitHub</a></p>
+      </footer>
+    </main>
+  </body>
+</html>
